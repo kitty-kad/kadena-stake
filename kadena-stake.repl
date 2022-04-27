@@ -11,20 +11,24 @@
 (load "coin.pact")
 (load "kadena-stake.pact")
 
-(coin.create-account "kadena-stake" (read-keyset "kadena-stake"))
-(test-capability (coin.CREDIT "kadena-stake"))
-(coin.credit "kadena-stake" (read-keyset "kadena-stake") 100.0)
+(coin.create-account "k:kadena-stake" (read-keyset "kadena-stake"))
+(test-capability (coin.CREDIT "k:kadena-stake"))
+(coin.credit "k:kadena-stake" (read-keyset "kadena-stake") 110.0)
 
-(test-capability (coin.TRANSFER "kadena-stake" "test-pool" 100.0))
-(kadena-stake.create-pool 
-    {        
-        "id":"test-pool",
-        "name":"Test Pool",
-        "apy": 10.0,
-        "balance": 100.0,
-        "token": coin,
-        "account": "kadena-stake"
-    }
+(test-capability (coin.TRANSFER "k:kadena-stake" "test-pool" 110.0))
+(kadena-stake.create-pool       
+    "test-pool"
+    "Test Pool"
+    10.0
+    100.0
+    coin
+    "k:kadena-stake"
+)
+
+(kadena-stake.create-stake       
+    "test-pool"
+    "k:kadena-stake"
+    10.0
 )
 
 

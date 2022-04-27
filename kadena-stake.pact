@@ -7,6 +7,7 @@
 (module kadena-stake "kadena-stake" "An example staking smart contract"
 
     (defconst ADMIN_KEYSET (read-keyset 'kadena-stake))
+    (defconst STAKE_KEY_DELIMETER " | STAKE_KEY_DELIMETER | ")
 
     ;;;;; CAPABILITIES
     (defcap ACCOUNT_GUARD(account:string)
@@ -23,17 +24,21 @@
         id:string
         name:string 
         apy:decimal
-        balance:decimal
+        starting-balance:decimal
         token:module{fungible-v2}
         account:string
+        tokens-locked:decimal
+        last-updated:time
+        owed:decimal
+        paid:decimal
     )
 
     (defschema stakes-schema
         @doc "Stores staking information for users, key is account + pool name"
         id:string
-        apy:decimal
+        pool-id:string
         balance:decimal
-        stake-time:time
+        last-updated:time
         account:string
     )
 
@@ -43,17 +48,24 @@
     ;;;;;;;;; CODE THAT NEEDS PERMISSIONS / CAPABILITIES ;;;;;;;;;;;;;;;
     
     ;;;;; Pool Related
-    (defun create-pool (pool-info:object{pools-schema})
+    (defun create-pool (id:string name:string apy:decimal starting-balance:decimal token:module{fungible-v2} account:string)
         @doc "Creates a new pool"
-        (insert pools (at "id" pool-info) pool-info)
-        (let 
-            (
-                (id (at "id" pool-info))
-                (token:module{fungible-v2} (at "token" pool-info))
-                (account (at "account" pool-info))
-                (balance (at "balance" pool-info))
+        (with-capability (ACCOUNT_GUARD account)
+            (token::transfer-create account id  ADMIN_KEYSET starting-balance)
+            (insert pools id
+                {
+                    "id": id,
+                    "name": name,
+                    "apy": apy,
+                    "starting-balance": starting-balance,
+                    "token": token,
+                    "account": account,
+                    "tokens-locked": 0.0, 
+                    "last-updated": (at "block-time" (chain-data)),
+                    "owed": 0.0,
+                    "paid": 0.0
+                }
             )
-            (token::transfer-create account id  ADMIN_KEYSET balance)
         )
     )
 
@@ -62,10 +74,26 @@
         (+ 1 1)
     )
 
-    ;;;;; User Related
-    (defun add-stake (pool-id:string, account:string, amount:decimal)
+    ;  ;;;;; User Related
+    (defun create-stake (pool-id:string account:string amount:decimal)
         @doc "Adds a stake for a user, claims rewards before doing so"
-        (+ 1 1)
+        (with-capability (ACCOUNT_GUARD account)
+            (let 
+                (
+                    (token:module{fungible-v2} (at "token" (read pools pool-id ["token"])))
+                    (stake-id (get-stake-id account pool-id))
+                )
+                (token::transfer account pool-id amount)
+                (insert stakes stake-id {
+                    "id": stake-id,
+                    "pool-id": pool-id,
+                    "balance": amount,
+                    "last-updated":  (at "block-time" (chain-data)),
+                    "account": account
+                })
+            )     
+            ; TODO CALCULATE AMOUNT OWED FOR POOL AND UPDATE TOKENS LOCKED
+        )
     )
 
     (defun claim-rewards (pool-id:string account:string)
@@ -81,7 +109,20 @@
     ;;;;;;;;;;;; HELPER FUNCTINONS ;;;;;;;;;;;;;;;;;;;
     (defun calculate-rewards (pool-id:string, account:string)
         @doc "Calculates rewards for an account in a pool"
-        (+ 1 1)
+        (let 
+            (
+                (stake-info (read stakes (get-stake-id account pool-id) ["pool-id" "balance" "last-updated" "account"]))
+            )
+            ; TODO CACLULATE REWARDS LEFT
+        )   
+    )
+
+    (defun get-stake-id (account:string pool-id:string )
+        @doc "Gets the stake id for a user in a pool"
+        (+ 
+            account
+            (+ STAKE_KEY_DELIMETER pool-id)
+        )
     )
 
 
