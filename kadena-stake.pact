@@ -140,19 +140,21 @@
             (enforce ( > time-passed 0.0) "From date is in the future")
             (
                 *
-                (
-                    *
-                    (
-                        /
-                        time-passed
-                        SECONDS_IN_YEAR
-                    )
-                    (/ apy 100)
-                )
+                (apy-for-ratio-of-seconds-in-year (seconds-over-seconds-in-year time-passed) apy)
                 balance
             )
         )
     )
+
+    (defun apy-for-ratio-of-seconds-in-year (ratio:decimal apy:decimal)
+        (* ratio (/ apy 100))
+    )
+
+    (defun seconds-over-seconds-in-year (time-passed:decimal)
+        @doc "Given seconds, calculate the % of a total year those seconds made up"
+        ( / time-passed SECONDS_IN_YEAR)
+    )
+
 
     (defun get-stake-id (account:string pool-id:string )
         @doc "Gets the stake id for a user in a pool"
