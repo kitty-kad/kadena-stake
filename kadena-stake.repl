@@ -13,22 +13,28 @@
 
 (coin.create-account "k:kadena-stake" (read-keyset "kadena-stake"))
 (test-capability (coin.CREDIT "k:kadena-stake"))
-(coin.credit "k:kadena-stake" (read-keyset "kadena-stake") 110.0)
+(coin.credit "k:kadena-stake" (read-keyset "kadena-stake") 210.0)
 
-(test-capability (coin.TRANSFER "k:kadena-stake" "test-pool" 110.0))
+(test-capability (coin.TRANSFER "k:kadena-stake" "test-pool" 210.0))
+(env-chain-data { "block-time" : (time "2022-04-28T00:00:00Z") })
 (kadena-stake.create-pool       
     "test-pool"
     "Test Pool"
     10.0
-    100.0
+    200.0
     coin
     "k:kadena-stake"
 )
-
+; Make some time pass so we can calculate new balance
+(env-chain-data { "block-time" : (time "2022-04-28T00:00:01Z") })
 (kadena-stake.create-stake       
     "test-pool"
     "k:kadena-stake"
     10.0
 )
+
+; Let a year pass and calculate how much balance is owed
+(env-chain-data { "block-time" : (time "2023-04-28T00:00:01Z") })
+(kadena-stake.calculate-owed-upto-now 10.0 (time "2022-04-28T00:00:00Z") 10.0)
 
 

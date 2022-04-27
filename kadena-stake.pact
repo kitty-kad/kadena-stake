@@ -8,6 +8,7 @@
 
     (defconst ADMIN_KEYSET (read-keyset 'kadena-stake))
     (defconst STAKE_KEY_DELIMETER " | STAKE_KEY_DELIMETER | ")
+    (defconst SECONDS_IN_YEAR 31536000)
 
     ;;;;; CAPABILITIES
     (defcap ACCOUNT_GUARD(account:string)
@@ -80,10 +81,16 @@
         (with-capability (ACCOUNT_GUARD account)
             (let 
                 (
-                    (token:module{fungible-v2} (at "token" (read pools pool-id ["token"])))
+                    (pool-data (read pools pool-id ["token" "tokens-locked" "last-updated" "apy"]))
                     (stake-id (get-stake-id account pool-id))
+                    (calculate-owed-upto-now)
                 )
-                (token::transfer account pool-id amount)
+                (let 
+                    ( 
+                        (token:module{fungible-v2} (at "token" pool-data))
+                    )
+                    (token::transfer account pool-id amount)
+                )
                 (insert stakes stake-id {
                     "id": stake-id,
                     "pool-id": pool-id,
@@ -91,6 +98,11 @@
                     "last-updated":  (at "block-time" (chain-data)),
                     "account": account
                 })
+                (calculate-owed-upto-now 
+                    (at "tokens-locked" pool-data) 
+                    (at "last-updated" pool-data) 
+                    (at "apy" pool-data) 
+                )
             )     
             ; TODO CALCULATE AMOUNT OWED FOR POOL AND UPDATE TOKENS LOCKED
         )
@@ -106,15 +118,40 @@
         (+ 1 1)
     )
 
-    ;;;;;;;;;;;; HELPER FUNCTINONS ;;;;;;;;;;;;;;;;;;;
-    (defun calculate-rewards (pool-id:string, account:string)
-        @doc "Calculates rewards for an account in a pool"
+    ;  ;;;;;;;;;;;; HELPER FUNCTINONS ;;;;;;;;;;;;;;;;;;;
+    ;  (defun calculate-rewards (pool-id:string, account:string)
+    ;      @doc "Calculates rewards for an account in a pool"
+    ;      (let 
+    ;          (
+    ;              (stake-info (read stakes (get-stake-id account pool-id) ["pool-id" "balance" "last-updated" "account"]))
+    ;          )
+    ;          ; TODO CACLULATE REWARDS LEFT
+    ;      )   
+    ;  )
+
+    (defun calculate-owed-upto-now (balance:decimal start-time:time apy:decimal)
+        @doc "Calculates tokens for an APY and a balance of tokens from start-tme to now"
+        (+ 1 1)
+        
         (let 
             (
-                (stake-info (read stakes (get-stake-id account pool-id) ["pool-id" "balance" "last-updated" "account"]))
+                (time-passed (diff-time  (at "block-time" (chain-data)) start-time) )
             )
-            ; TODO CACLULATE REWARDS LEFT
-        )   
+            (enforce ( > time-passed 0.0) "From date is in the future")
+            (
+                *
+                (
+                    *
+                    (
+                        /
+                        time-passed
+                        SECONDS_IN_YEAR
+                    )
+                    (/ apy 100)
+                )
+                balance
+            )
+        )
     )
 
     (defun get-stake-id (account:string pool-id:string )
