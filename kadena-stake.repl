@@ -1,0 +1,30 @@
+(env-data 
+    { 
+        "kadena-stake": ["kadena-stake"]
+    }
+)
+
+(env-keys ["kadena-stake"])
+(define-keyset "kadena-stake" (read-keyset "kadena-stake"))
+
+(load "fungible-v2.pact")
+(load "coin.pact")
+(load "kadena-stake.pact")
+
+(coin.create-account "kadena-stake" (read-keyset "kadena-stake"))
+(test-capability (coin.CREDIT "kadena-stake"))
+(coin.credit "kadena-stake" (read-keyset "kadena-stake") 100.0)
+
+(test-capability (coin.TRANSFER "kadena-stake" "test-pool" 100.0))
+(kadena-stake.create-pool 
+    {        
+        "id":"test-pool",
+        "name":"Test Pool",
+        "apy": 10.0,
+        "balance": 100.0,
+        "token": coin,
+        "account": "kadena-stake"
+    }
+)
+
+
