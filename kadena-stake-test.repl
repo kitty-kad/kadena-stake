@@ -19,14 +19,14 @@
 (env-gaslog)
 (expect
   "Gas cost of loading coin contract"
-  3301 (env-gas))
+  3300 (env-gas))
 
 (create-table coin.coin-table)
 (create-table coin.allocation-table)
 
 (commit-tx)
 
-(verify 'coin)
+;  (verify 'coin)
 
 ;; Account creation and account details unit tests
 (begin-tx)
@@ -95,7 +95,9 @@
 (env-data { 'ns: 'test })
 (load "kadena-stake.pact")
 (create-table test.kadena-stake.pools)
+(create-table test.kadena-stake.pools-usage)
 (create-table test.kadena-stake.stakes)
+
 (env-gaslog)
 (commit-tx)
 
@@ -126,23 +128,34 @@
 ;Test create stake in test-pool with k:emily, 1 milisecond after test-pool is created
 (begin-tx)
 (env-chain-data { "block-time" : (time "2021-04-28T00:00:01Z") })
-(test-capability (coin.TRANSFER "k:emily" "test-pool" 10.0))
+(test-capability (coin.TRANSFER "k:emily" "test-pool" 100.0))
 (test.kadena-stake.create-stake
     "test-pool"
     "k:emily"
-    10.0
+    100.0
 )
 (commit-tx)
 
 ;Test calculate rewards a year later with k:emily
 (begin-tx)
 (env-chain-data { "block-time" : (time "2022-04-28T00:00:01Z") })
-(test.kadena-stake.calculate-owed-upto-now 10.0 (time "2021-04-28T00:00:00Z") 10.0)
+(expect
+  "Correct percentage is calculated"
+  (test.kadena-stake.calculate-owed-upto-now 10.0 (time "2021-04-28T00:00:00Z") 10.0 (coin.precision))
+  1.000000031709
+)
 (commit-tx)
 
 ;Test claim rewards a year later with k:emily
 (begin-tx)
-(env-chain-data { "block-time" : (time "2022-04-28T00:00:01Z") })
-(test.kadena-stake.claim-rewards "test-pool" "k:emily")
+  (env-chain-data { "block-time" : (time "2022-04-28T00:00:01Z") })
+  ;  THIS CAPABILITY SHOULD BE DONE VIA MODULE FUNCTIONS IN THE FUTURE
+  (test-capability (coin.TRANSFER "test-pool" "k:emily" 200.0)) 
+  (test.kadena-stake.claim-rewards "test-pool" "k:emily")
+  (expect
+    "account balance reflects credit"
+    710.0
+    (coin.get-balance "k:emily")
+  )
 (commit-tx)
 
