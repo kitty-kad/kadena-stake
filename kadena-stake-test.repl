@@ -1,0 +1,148 @@
+;;////////////////////
+;;COIN ACCOUNT STUFF
+;;////////////////////
+
+;; Enable the table gas model
+(env-gasmodel "table")
+(env-gaslimit 150000)
+
+(begin-tx)
+(env-gas 0) (env-gaslog)
+(load "fungible-v2.pact")
+(env-gaslog)
+(expect
+  "Gas cost of loading fungible contract"
+  840 (env-gas))
+
+(env-gas 0) (env-gaslog)
+(load "coin.pact")
+(env-gaslog)
+(expect
+  "Gas cost of loading coin contract"
+  3301 (env-gas))
+
+(create-table coin.coin-table)
+(create-table coin.allocation-table)
+
+(commit-tx)
+
+(verify 'coin)
+
+;; Account creation and account details unit tests
+(begin-tx)
+(env-data { "k:emily" : ["keys1"], "admin-kadena-stake": ["keys2"], "kadena-stake-bank": ["keys3"], "k:doug": ["keys4"] })
+(env-keys ["keys1", "keys2", "keys3", "keys4"])
+(define-keyset "k:emily" (read-keyset "k:emily"))
+(define-keyset 'admin-kadena-stake (read-keyset "admin-kadena-stake"))
+(define-keyset 'kadena-stake-bank (read-keyset "kadena-stake-bank"))
+(define-keyset "k:doug" (read-keyset "k:doug"))
+
+(env-gas 0) (env-gaslog)
+(use coin)
+(env-gaslog)
+(expect
+  "Gas cost of using the coin contract"
+  2 (env-gas))
+
+;; create accounts should succeed and initialize with correct amounts and guards
+(env-gas 0) (env-gaslog)
+(create-account "k:emily" (read-keyset "k:emily"))
+(create-account 'admin-kadena-stake (read-keyset 'admin-kadena-stake))
+(create-account 'kadena-stake-bank (read-keyset 'kadena-stake-bank))
+(create-account "k:doug" (read-keyset "k:doug"))
+(commit-tx)
+
+;; credits + debits should succeed. Both should reflect the correct balance
+
+(begin-tx)
+
+(use coin)
+
+(env-gas 0) (env-gaslog)
+(test-capability (DEBIT "k:emily"))
+(env-gaslog)
+(expect
+  "Gas cost of testing the DEBIT capability"
+  26 (env-gas))
+
+;; credit tests
+(test-capability (CREDIT "k:emily"))
+(credit "k:emily" (read-keyset "k:emily") 1000.0)
+
+(test-capability (CREDIT "k:doug"))
+(credit "k:doug" (read-keyset "k:doug") 75.0)
+(expect
+  "account balance reflects credit"
+  1000.0
+  (get-balance "k:emily"))
+
+(test-capability (CREDIT "admin-kadena-stake"))
+(credit 'admin-kadena-stake (read-keyset 'admin-kadena-stake) 50.0)
+(expect
+  "account balance reflects credit"
+  50.0
+  (get-balance 'admin-kadena-stake))
+(commit-tx)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;////////////////////////////
+;;kadena-stake TESTS
+;;;;;;;;;;;;;;;;;;;;;;;;;;//////////////////////////
+
+;Load Contract + Create Tables
+(begin-tx)
+(define-namespace 'test (sig-keyset) (sig-keyset))
+(env-data { 'ns: 'test })
+(load "kadena-stake.pact")
+(create-table test.kadena-stake.pools)
+(create-table test.kadena-stake.stakes)
+(env-gaslog)
+(commit-tx)
+
+;Create accounts
+(begin-tx)
+(env-data { "k:emily" : ["keys1"], "admin-kadena-stake": ["keys2"], "kadena-stake-bank": ["keys3"], "k:doug": ["keys4"], "prev-block-hash": "lPqiP54vy_E3rAkvgQVme2FreVXpVhOV3dIJYENZ2Zk" })
+(env-keys ["keys1", "keys2", "keys3", "keys4"])
+(define-keyset "k:emily" (read-keyset "k:emily"))
+(define-keyset "k:doug" (read-keyset "k:doug"))
+(define-keyset 'admin-kadena-stake (read-keyset "admin-kadena-stake"))
+(define-keyset 'kadena-stake-bank (read-keyset "kadena-stake-bank"))
+(commit-tx)
+
+;Test create pool 'test-pool' with k:emily
+(begin-tx)
+(test-capability (coin.TRANSFER "k:emily" "test-pool" 200.0))
+(env-chain-data { "block-time" : (time "2021-04-28T00:00:00Z") })
+(test.kadena-stake.create-pool
+    "test-pool"
+    "Test Pool"
+    10.0
+    200.0
+    coin
+    "k:emily"
+)
+(commit-tx)
+
+;Test create stake in test-pool with k:emily, 1 milisecond after test-pool is created
+(begin-tx)
+(env-chain-data { "block-time" : (time "2021-04-28T00:00:01Z") })
+(test-capability (coin.TRANSFER "k:emily" "test-pool" 10.0))
+(test.kadena-stake.create-stake
+    "test-pool"
+    "k:emily"
+    10.0
+)
+(commit-tx)
+
+;Test calculate rewards a year later with k:emily
+(begin-tx)
+(env-chain-data { "block-time" : (time "2022-04-28T00:00:01Z") })
+(test.kadena-stake.calculate-owed-upto-now 10.0 (time "2021-04-28T00:00:00Z") 10.0)
+(commit-tx)
+
+;Test claim rewards a year later with k:emily
+(begin-tx)
+(env-chain-data { "block-time" : (time "2022-04-28T00:00:01Z") })
+(test.kadena-stake.claim-rewards "test-pool" "k:emily")
+(commit-tx)
+
