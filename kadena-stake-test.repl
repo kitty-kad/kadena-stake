@@ -19,7 +19,7 @@
 (env-gaslog)
 (expect
   "Gas cost of loading coin contract"
-  3300 (env-gas))
+  3301 (env-gas))
 
 (create-table coin.coin-table)
 (create-table coin.allocation-table)
@@ -176,8 +176,6 @@
 (coin.get-balance "test-pool")
 (coin.get-balance "k:emily")
 (env-chain-data { "block-time" : (time "2022-04-28T00:00:01Z") })
-;  CAPABILITIES GRANTED VIA WITHDRAW-STAKE FUNCTION
-(test-capability (coin.TRANSFER "test-pool" "k:emily" 200.0))
 (expect-failure
  "doug cant deactivate emilys pool"
  "row not found: k:emily:test-pool"
@@ -195,8 +193,6 @@
 (test.kadena-stake.get-pool-info "test-pool")
 
 (env-chain-data { "block-time" : (time "2022-04-28T00:00:02Z") })
-;  CAPABILITIES GRANTED VIA WITHDRAW-STAKE FUNCTION
-(test-capability (coin.TRANSFER "test-pool" "k:doug" 200.0))
 (test.kadena-stake.claim-rewards "test-pool" "k:doug")
 (expect
     "account balance reflects credit"
@@ -277,7 +273,6 @@
 (coin.get-balance "k:doug")
 
 (env-chain-data { "block-time" : (time "2022-04-28T00:00:05Z") })
-(test-capability (coin.TRANSFER "test-pool" "k:doug" 100.000000317097))
 (test.kadena-stake.claim-rewards "test-pool" "k:doug")
 (expect
     "account balance reflects credit"
@@ -298,7 +293,6 @@
 (coin.get-balance "k:doug")
 (env-chain-data { "block-time" : (time "2022-04-28T00:00:06Z") })
 (test-capability (UPDATE))
-;(test-capability (coin.TRANSFER "test-pool" "k:emily" 200.0))
 (test.kadena-stake.withdraw-stake "k:doug" "test-pool")
 (expect
     "account balance reflects credit"
@@ -310,6 +304,7 @@
 (coin.get-balance "k:doug")
 (commit-tx)
 
+;Test deactivate pool again with pool owner k:emily after all pool stakers have removed their stake - PASS
 (begin-tx)
 (use test.kadena-stake)
 (coin.get-balance "test-pool")
