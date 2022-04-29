@@ -187,9 +187,28 @@
         )
     )
 
-    (defun claim-rewards (pool-id:string account:string approve:decimal)
-        @doc "Claims the rewards a user is owed"
+    (defun update-pool-usage-after-rewards-claimed (pool-id:string claimed:decimal)
+        @doc "Updates pool usage after rewards claimed"
         (require-capability (UPDATE))
+        (let
+            (
+                (pool-usage-data (read pools-usage pool-id))
+            )
+            (update pools-usage pool-id
+                (+
+                    {
+                        "last-updated": (at "block-time" (chain-data)),
+                        "paid": (+ (at "paid" pool-usage-data) claimed)
+                    }
+                    pool-usage-data
+                )
+            )
+        )
+    )
+
+    (defun claim-rewards (pool-id:string account:string)
+        @doc "Claims the rewards a user is owed"
+        (with-capability (ACCOUNT_GUARD account)
             (let
                 (
                     (stake-id (get-stake-id-key account pool-id))
@@ -214,7 +233,7 @@
                            )
                         )
                         (enforce (= account (at "account" stake)) "Not authorised to claim this stake")
-                        (install-capability (token::TRANSFER pool-id account (+ to-pay approve) ))
+                        (install-capability (token::TRANSFER pool-id account to-pay))
                         (token::transfer pool-id account to-pay)
                         (update stakes stake-id  (+ {"last-updated":  (at "block-time" (chain-data))} stake))
                         (update pools-usage pool-id
@@ -229,6 +248,7 @@
                     )
                 )
             )
+        )
     )
 
     (defun withdraw-stake (account:string pool-id:string)
@@ -241,25 +261,33 @@
                     (pool-data (read pools pool-id))
                     (pool-usage-data (read pools-usage pool-id))
                 )
-                (let
+                (let*
                     (
                         (token:module{fungible-v2} (at "token" pool-data))
                         (stake (read stakes stake-id))
                     )
                     (let
                         (
-                           (to-pay (at "balance" stake))
+                           (to-pay-stake (at "balance" stake) )
+                           (to-pay-reward
+                                (calculate-owed-upto-now
+                                    (at "balance" stake)
+                                    (at "last-updated" stake)
+                                    (at "apy" pool-data)
+                                    (token::precision)
+                                )
+                           )
                         )
                         (enforce (= account (at "account" stake)) "Not authorised to claim this stake")
-                        ;(install-capability (token::TRANSFER pool-id account to-pay) )
-                        (claim-rewards pool-id account to-pay)
-                        (token::transfer pool-id account to-pay)
+                        (install-capability (token::TRANSFER pool-id account (+ to-pay-stake to-pay-reward)  ) )
+                        (token::transfer pool-id account (+ to-pay-stake to-pay-reward) )
                         (update stakes stake-id  (+ {"last-updated":  (at "block-time" (chain-data)), "balance": 0.0} stake))
                         (update pools-usage pool-id
                             (+
                                 {
                                     "last-updated": (at "block-time" (chain-data)),
-                                    "tokens-locked": (- (at "tokens-locked" pool-usage-data) to-pay)
+                                    "tokens-locked": (- (at "tokens-locked" pool-usage-data) to-pay-stake),
+                                    "paid": (+ (at "paid" pool-usage-data) to-pay-reward)
                                 }
                                 pool-usage-data
                             )
