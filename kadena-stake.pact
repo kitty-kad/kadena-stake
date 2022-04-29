@@ -113,7 +113,9 @@
                         (
                            (to-pay (if (= (at "owed" pool-usage-data) 0.0) (if (= (at "tokens-locked" pool-usage-data) 0.0) (token::get-balance pool-id) (- (- (- (at "starting-balance" pool-data) (at "paid" pool-usage-data)) (at "tokens-locked" pool-usage-data)) (at "owed" pool-usage-data)) ) (- (- (- (at "starting-balance" pool-data) (at "paid" pool-usage-data)) (at "tokens-locked" pool-usage-data)) (at "owed" pool-usage-data)) )  )
                         )
+                        ;Enforce pool owner
                         (enforce (= (at "account" pool-data) account) "Access prohibited.")
+                        ;Transfer pool starting stake
                         (install-capability (token::TRANSFER pool-id account to-pay) )
                         (token::transfer pool-id account to-pay)
                         (update pools pool-id
