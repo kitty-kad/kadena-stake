@@ -111,7 +111,7 @@
 (define-keyset 'kadena-stake-bank (read-keyset "kadena-stake-bank"))
 (commit-tx)
 
-;Test create pool 'test-pool' with k:emily
+;Test create pool 'test-pool' with k:emily for 300 KDA
 (begin-tx)
 (test-capability (coin.TRANSFER "k:emily" "test-pool" 200.0))
 (env-chain-data { "block-time" : (time "2021-04-28T00:00:00Z") })
@@ -125,7 +125,7 @@
 )
 (commit-tx)
 
-;Test create stake in test-pool with k:emily, 1 milisecond after test-pool is created
+;Test create stake 100KDA in test-pool with k:emily, 1 milisecond after test-pool is created
 (begin-tx)
 (env-chain-data { "block-time" : (time "2021-04-28T00:00:01Z") })
 (test-capability (coin.TRANSFER "k:emily" "test-pool" 100.0))
@@ -134,6 +134,15 @@
     "k:emily"
     100.0
 )
+(commit-tx)
+
+;;;;;;;;;;;;;;;;;;;;;;;
+;;POOL CONTAINS 300KDA
+;;200 KDA FROM POOL START
+;;100 KDA FROM k:emily
+;;;;;;;;;;;;;;;;;;;;;;;
+(begin-tx)
+(coin.get-balance "test-pool")
 (commit-tx)
 
 ;Test calculate rewards a year later with k:emily
@@ -146,36 +155,47 @@
 )
 (commit-tx)
 
-;Test claim rewards function a year later with k:emily - PASSES / COMMENTED OUT
-; (begin-tx)
-; (use test.kadena-stake)
-; (env-chain-data { "block-time" : (time "2022-04-28T00:00:01Z") })
-; ;  THIS CAPABILITY SHOULD BE DONE VIA MODULE FUNCTIONS IN THE FUTURE
-; (test-capability (coin.TRANSFER "test-pool" "k:emily" 200.0))
-; (test-capability (UPDATE))
-; (test.kadena-stake.claim-rewards "test-pool" "k:emily")
-; (expect
-;     "account balance reflects credit"
-;     710.0
-;     (coin.get-balance "k:emily")
-; )
-; (commit-tx)
 
 ;Test claim rewards function a year later with k:emily without UPDATE capability - EXPECT FAILURE PASSES
 ;Function not to be called directly
+; (begin-tx)
+; (use test.kadena-stake)
+; (env-chain-data { "block-time" : (time "2022-04-28T00:00:01Z") })
+; (expect-failure
+;     "credit capability not granted"
+;     "not granted: (test.kadena-stake.UPDATE)"
+;     (test.kadena-stake.claim-rewards "test-pool" "k:emily" 0.0)
+; )
+; (commit-tx)
+
+
+;Test claim rewards function a year later with k:emily - PASSES
 (begin-tx)
 (use test.kadena-stake)
+;300 kda in pool
+(coin.get-balance "test-pool")
+(coin.get-balance "k:emily")
+
 (env-chain-data { "block-time" : (time "2022-04-28T00:00:01Z") })
+;  CAPABILITIES GRANTED VIA WITHDRAW-STAKE FUNCTION
 (test-capability (coin.TRANSFER "test-pool" "k:emily" 200.0))
-(expect-failure
-    "credit capability not granted"
-    "not granted: (test.kadena-stake.UPDATE)"
-    (test.kadena-stake.claim-rewards "test-pool" "k:emily" 0.0)
+(test.kadena-stake.claim-rewards "test-pool" "k:emily")
+(expect
+    "account balance reflects credit"
+    710.0
+    (coin.get-balance "k:emily")
 )
+
+;290 kda in pool
+(coin.get-balance "test-pool")
+(coin.get-balance "k:emily")
 (commit-tx)
+
+
 
 ;Test getters get-pools get-pool-info - PASS
 (begin-tx)
+(coin.get-balance "test-pool")
 (keys test.kadena-stake.pools)
 (test.kadena-stake.get-pools)
 (test.kadena-stake.get-pool-info "test-pool")
@@ -189,28 +209,28 @@
 ; (coin.get-balance "k:emily")
 ; (commit-tx)
 
-(begin-tx)
-(use test.kadena-stake)
-(test-capability (UPDATE))
-(test.kadena-stake.update-pool-usage-after-rewards-claimed "test-pool" 100.0)
-(commit-tx)
+; (begin-tx)
+; (use test.kadena-stake)
+; (test-capability (UPDATE))
+; (test.kadena-stake.update-pool-usage-after-rewards-claimed "test-pool" 100.0)
+; (commit-tx)
 
 ;Test withdraw stake k:emily
 (begin-tx)
 (use test.kadena-stake)
 (test.kadena-stake.get-pool-info "test-pool")
 (coin.get-balance "test-pool")
-(env-chain-data { "block-time" : (time "2022-04-28T00:00:01Z") })
+(env-chain-data { "block-time" : (time "2022-04-28T00:00:02Z") })
 (test-capability (UPDATE))
 ;(test-capability (coin.TRANSFER "test-pool" "k:emily" 200.0))
 (test.kadena-stake.withdraw-stake "k:emily" "test-pool")
 (expect
     "account balance reflects credit"
-    810.0
+    810.000000317097
     (coin.get-balance "k:emily")
 )
 (test.kadena-stake.get-pool-info "test-pool")
-(coin.details "test-pool")
+(coin.get-balance "test-pool")
 (commit-tx)
 
 ;Test deactivate pool - PASS
@@ -220,4 +240,5 @@
 (coin.get-balance "k:emily")
 (test.kadena-stake.deactivate-pool "test-pool" "k:emily")
 (coin.get-balance "k:emily")
+(coin.get-balance "test-pool")
 (commit-tx)
