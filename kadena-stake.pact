@@ -111,7 +111,7 @@
                     )
                     (let
                         (
-                           (to-pay (- (- (- (at "starting-balance" pool-data) (at "paid" pool-usage-data)) (at "tokens-locked" pool-usage-data)) (at "owed" pool-usage-data))  )
+                           (to-pay (if (= (at "owed" pool-usage-data) 0.0) (if (= (at "tokens-locked" pool-usage-data) 0.0) (token::get-balance pool-id) (- (- (- (at "starting-balance" pool-data) (at "paid" pool-usage-data)) (at "tokens-locked" pool-usage-data)) (at "owed" pool-usage-data)) ) (- (- (- (at "starting-balance" pool-data) (at "paid" pool-usage-data)) (at "tokens-locked" pool-usage-data)) (at "owed" pool-usage-data)) )  )
                         )
                         (enforce (= (at "account" pool-data) account) "Access prohibited.")
                         (install-capability (token::TRANSFER pool-id account to-pay) )
@@ -136,7 +136,7 @@
         (with-capability (ACCOUNT_GUARD account)
             (let
                 (
-                    (pool-data (read pools pool-id ["token" "apy" "active"]))
+                    (pool-data (read pools pool-id ["token" "apy" "active" "account"]))
                     (stake-id (get-stake-id-key account pool-id))
                 )
                 (let
@@ -144,6 +144,7 @@
                         (token:module{fungible-v2} (at "token" pool-data))
                     )
                     (enforce (= (at "active" pool-data) true) "Staking pool is not active.")
+                    (enforce (!= (at "account" pool-data) account) "Pool owners may not stake their own pools.")
                     (token::transfer account pool-id amount)
                     (insert stakes stake-id {
                         "id": stake-id,
@@ -172,7 +173,7 @@
                 {
                     "tokens-locked": (+ (at "tokens-locked" pool-usage-data) locked-amount-change),
                     "last-updated": (at "block-time" (chain-data)),
-                    "owed": (+
+                    "owed": (abs(+
                         (at "owed" pool-usage-data)
                         (calculate-owed-upto-now
                             (at "tokens-locked" pool-usage-data)
@@ -180,7 +181,7 @@
                             (at "apy" pool-data)
                             (token::precision)
                         )
-                    ),
+                    )),
                     "paid": (at "paid" pool-usage-data)
                 }
             )
@@ -240,7 +241,8 @@
                             (+
                                 {
                                     "last-updated": (at "block-time" (chain-data)),
-                                    "paid": (+ (at "paid" pool-usage-data) to-pay)
+                                    "paid": (+ (at "paid" pool-usage-data) to-pay),
+                                    "owed": (abs(-(+(at "owed" pool-usage-data)(calculate-owed-upto-now (at "tokens-locked" pool-usage-data) (at "last-updated" pool-usage-data) (at "apy" pool-data)(token::precision)))to-pay))
                                 }
                                 pool-usage-data
                             )
@@ -287,7 +289,19 @@
                                 {
                                     "last-updated": (at "block-time" (chain-data)),
                                     "tokens-locked": (- (at "tokens-locked" pool-usage-data) to-pay-stake),
-                                    "paid": (+ (at "paid" pool-usage-data) to-pay-reward)
+                                    "paid": (+ (at "paid" pool-usage-data) to-pay-reward),
+                                    "owed": (abs (-
+                                              (+
+                                                (at "owed" pool-usage-data)
+                                                (calculate-owed-upto-now
+                                                    (at "tokens-locked" pool-usage-data)
+                                                    (at "last-updated" pool-usage-data)
+                                                    (at "apy" pool-data)
+                                                    (token::precision)
+                                                )
+                                              )
+                                              to-pay-reward
+                                            ))
                                 }
                                 pool-usage-data
                             )
