@@ -44,6 +44,7 @@
         starting-balance:decimal
         token:module{fungible-v2}
         account:string
+        active:bool
     )
 
     (defschema pools-usage-schema
@@ -83,7 +84,8 @@
                     "apy": apy,
                     "starting-balance": starting-balance,
                     "token": token,
-                    "account": account
+                    "account": account,
+                    "active": true
                 }
             )
             (insert pools-usage id {
@@ -95,9 +97,37 @@
         )
     )
 
-    (defun deactivate-pool (pool-id:string)
+    (defun deactivate-pool (pool-id:string account:string)
         @doc "Deactivates a pool and withdraws un-used funds back to "
-        (+ 1 1)
+        (with-capability (ACCOUNT_GUARD account)
+        (let
+                (
+                    (pool-data (read pools pool-id))
+                    (pool-usage-data (read pools-usage pool-id))
+                )
+                (let
+                    (
+                        (token:module{fungible-v2} (at "token" pool-data))
+                    )
+                    (let
+                        (
+                           (to-pay (- (- (- (at "starting-balance" pool-data) (at "paid" pool-usage-data)) (at "tokens-locked" pool-usage-data)) (at "owed" pool-usage-data))  )
+                        )
+                        (enforce (= (at "account" pool-data) account) "Access prohibited.")
+                        (install-capability (token::TRANSFER pool-id account to-pay) )
+                        (token::transfer pool-id account to-pay)
+                        (update pools pool-id
+                          (+
+                              {
+                                  "active": false
+                              }
+                              pool-data
+                          )
+                        )
+                    )
+                )
+        )
+        )
     )
 
     ;  ;;;;; User Related
@@ -106,13 +136,14 @@
         (with-capability (ACCOUNT_GUARD account)
             (let
                 (
-                    (pool-data (read pools pool-id ["token" "apy"]))
+                    (pool-data (read pools pool-id ["token" "apy" "active"]))
                     (stake-id (get-stake-id-key account pool-id))
                 )
                 (let
                     (
                         (token:module{fungible-v2} (at "token" pool-data))
                     )
+                    (enforce (= (at "active" pool-data) true) "Staking pool is not active.")
                     (token::transfer account pool-id amount)
                     (insert stakes stake-id {
                         "id": stake-id,
@@ -156,32 +187,14 @@
         )
     )
 
-    (defun update-pool-usage-after-rewards-claimed (pool-id:string claimed:decimal)
-        @doc "Updates pool usage after rewards claimed"
-        (require-capability (UPDATE))
-        (let
-            (
-                (pool-usage-data (read pools-usage pool-id))
-            )
-            (update pools-usage pool-id
-                (+
-                    {
-                        "last-updated": (at "block-time" (chain-data)),
-                        "paid": (+ (at "paid" pool-usage-data) claimed)
-                    }
-                    pool-usage-data
-                )
-            )
-        )
-    )
-
-    (defun claim-rewards (pool-id:string account:string)
+    (defun claim-rewards (pool-id:string account:string approve:decimal)
         @doc "Claims the rewards a user is owed"
         (require-capability (UPDATE))
             (let
                 (
                     (stake-id (get-stake-id-key account pool-id))
                     (pool-data (read pools pool-id ["token" "apy"]))
+                    (pool-usage-data (read pools-usage pool-id))
                 )
                 (let
                     (
@@ -201,9 +214,18 @@
                            )
                         )
                         (enforce (= account (at "account" stake)) "Not authorised to claim this stake")
+                        (install-capability (token::TRANSFER pool-id account (+ to-pay approve) ))
                         (token::transfer pool-id account to-pay)
                         (update stakes stake-id  (+ {"last-updated":  (at "block-time" (chain-data))} stake))
-                        (update-pool-usage-after-rewards-claimed pool-id to-pay)
+                        (update pools-usage pool-id
+                            (+
+                                {
+                                    "last-updated": (at "block-time" (chain-data)),
+                                    "paid": (+ (at "paid" pool-usage-data) to-pay)
+                                }
+                                pool-usage-data
+                            )
+                        )
                     )
                 )
             )
@@ -213,7 +235,6 @@
         @doc "Withdraws users stake complete and claims rewards before doing so"
         (with-capability (ACCOUNT_GUARD account)
           (with-capability (UPDATE)
-          (claim-rewards pool-id account)
           (let
                 (
                     (stake-id (get-stake-id-key account pool-id))
@@ -227,11 +248,11 @@
                     )
                     (let
                         (
-                           (to-pay
-                             (at "balance" stake)
-                           )
+                           (to-pay (at "balance" stake))
                         )
                         (enforce (= account (at "account" stake)) "Not authorised to claim this stake")
+                        ;(install-capability (token::TRANSFER pool-id account to-pay) )
+                        (claim-rewards pool-id account to-pay)
                         (token::transfer pool-id account to-pay)
                         (update stakes stake-id  (+ {"last-updated":  (at "block-time" (chain-data)), "balance": 0.0} stake))
                         (update pools-usage pool-id
@@ -249,6 +270,8 @@
           )
         )
     )
+
+
 
     (defun calculate-owed-upto-now (balance:decimal start-time:time apy:decimal precision:integer)
         @doc "Calculates tokens for an APY and a balance of tokens from start-tme to now"
