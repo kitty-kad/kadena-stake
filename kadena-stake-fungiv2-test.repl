@@ -136,6 +136,9 @@
     200.0
     0.0
     200.0
+    86400.0
+    10.0
+    true
 )
 (coin.get-balance "k:emily")
 (commit-tx)
@@ -439,21 +442,21 @@
 ;emily gets back her KDA out of the pool and deactivates the pool
 
 ;Test withdraw stake k:kitty after pool is deactivated and he has no stake or reward
-(begin-tx)
-(use test.kadena-stake-fungiv2)
-(test.kadena-stake-fungiv2.get-pool-info "test-pool")
-(coin.get-balance "test-pool")
-(coin.get-balance "k:kitty")
-(env-chain-data { "block-time" : (time "2023-04-28T00:00:09Z") })
-(test-capability (UPDATE))
-(expect-failure
-    "transfer amount must be positive"
-    "transfer amount must be positive"
-    (test.kadena-stake-fungiv2.withdraw-stake "k:kitty" "test-pool"))
-(test.kadena-stake-fungiv2.get-pool-info "test-pool")
-(coin.get-balance "test-pool")
-(coin.get-balance "k:kitty")
-(commit-tx)
+; (begin-tx)
+; (use test.kadena-stake-fungiv2)
+; (test.kadena-stake-fungiv2.get-pool-info "test-pool")
+; (coin.get-balance "test-pool")
+; (coin.get-balance "k:kitty")
+; (env-chain-data { "block-time" : (time "2023-04-28T00:00:09Z") })
+; (test-capability (UPDATE))
+; (expect-failure
+;     "transfer amount must be positive"
+;     "transfer amount must be positive"
+;     (test.kadena-stake-fungiv2.withdraw-stake "k:kitty" "test-pool"))
+; (test.kadena-stake-fungiv2.get-pool-info "test-pool")
+; (coin.get-balance "test-pool")
+; (coin.get-balance "k:kitty")
+; (commit-tx)
 
 ;kitty gets nothing back from the pool because it was deactivated
 
@@ -513,3 +516,127 @@
 (test.kadena-stake-fungiv2.get-pools)
 (test.kadena-stake-fungiv2.get-pool-info "test-pool")
 (commit-tx)
+
+;////////////////////////////////////////////////////////////////////////
+;Variable APY Testing
+;///////////////////////////////////////////////////////////////////////
+
+
+;Test create pool 'test-pool3' with k:stuart for 200 KDA
+(begin-tx)
+
+(coin.get-balance "k:stuart")
+(test-capability (coin.TRANSFER "k:stuart" "test-pool3" 100.0))
+(env-chain-data { "block-time" : (time "2022-04-28T00:00:00Z") })
+(test.kadena-stake-fungiv2.create-pool
+    "test-pool3"
+    "Test Pool3"
+    10.0
+    100.0
+    coin
+    coin
+    "k:stuart"
+    100.0
+    0.0
+    100.0
+    86400.0
+    10.0
+    false
+)
+(coin.get-balance "k:stuart")
+(commit-tx)
+
+;This pool is designed to distribute 10 new rewards every day to stakers depending on their stake in the pool
+
+;Test calculate rewards - PASS
+(begin-tx)
+(env-chain-data { "block-time" : (time "2022-04-28T00:00:01Z") })
+(expect
+  "Correct percentage is calculated"
+  (test.kadena-stake-fungiv2.calculate-owed-upto-now 10.0 (time "2021-04-28T00:00:00Z") 10.0 (coin.precision) "test-pool3")
+  1.000000031709
+)
+(commit-tx)
+
+;Test create stake 100KDA in test-pool with k:doug, 1 ms later
+(begin-tx)
+(coin.get-balance "k:doug")
+(env-chain-data { "block-time" : (time "2022-04-28T00:00:02Z") })
+(test-capability (coin.TRANSFER "k:doug" "test-pool3" 100.0))
+(test.kadena-stake-fungiv2.create-stake
+    "test-pool3"
+    "k:doug"
+    100.0
+)
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+(coin.get-balance "k:doug")
+(test.kadena-stake-fungiv2.get-user-pools "k:doug")
+(commit-tx)
+
+;Doug is only staker, with 100% of stake in pool
+;At this point 100% of the available rewards would go to doug
+
+;Test create stake 100KDA in test-pool with k:kitty, 1 ms later
+(begin-tx)
+(coin.get-balance "k:kitty")
+(env-chain-data { "block-time" : (time "2022-04-28T00:00:02Z") })
+(test-capability (coin.TRANSFER "k:kitty" "test-pool3" 100.0))
+(test.kadena-stake-fungiv2.create-stake
+    "test-pool3"
+    "k:kitty"
+    100.0
+)
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+(coin.get-balance "k:kitty")
+(test.kadena-stake-fungiv2.get-user-pools "k:kitty")
+(commit-tx)
+
+;Kitty is 2nd staker, with 50% of stake in pool
+;At this point, kitty would get 50% of available rewards and the other 50% would go to doug
+
+;Test create stake 100KDA in test-pool with k:emily, 1 ms later
+(begin-tx)
+(coin.get-balance "k:emily")
+(env-chain-data { "block-time" : (time "2022-04-28T00:00:02Z") })
+(test-capability (coin.TRANSFER "k:emily" "test-pool3" 100.0))
+(test.kadena-stake-fungiv2.create-stake
+    "test-pool3"
+    "k:emily"
+    100.0
+)
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+(coin.get-balance "k:emily")
+(test.kadena-stake-fungiv2.get-user-pools "k:emily")
+(commit-tx)
+
+;Emily is 3rd staker, stakes same amount as all previous stakers, for an equal share of 33.3% of pool
+;At this point, each staker would get 33.3% of available rewards
+
+
+;Test claim rewards function a DAY later with k:doug
+(begin-tx)
+(use test.kadena-stake-fungiv2)
+
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:doug")
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+
+(env-chain-data { "block-time" : (time "2022-04-29T00:00:02Z") })
+
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+
+(test.kadena-stake-fungiv2.claim-rewards "test-pool3" "k:doug")
+(expect
+    "account balance reflects credit"
+    913.333411762135
+    (coin.get-balance "k:doug")
+)
+
+
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:doug")
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+(test.kadena-stake-fungiv2.get-user-pools "k:doug")
+(commit-tx)
+
+;Doug got paid 33.3% of the rewards - pass
