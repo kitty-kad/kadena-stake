@@ -6,6 +6,8 @@
 
 (module kadena-stake-fungiv2 GOVERNANCE "Kadena Stake Fungiv2 - Stake FungiV2 Tokens + Create FungiV2 Staking Pools"
 
+;Pool factory for creating Fungible-V2 / Fungible-V2 staking pools with various options
+
     ;;;;; CONSTANTS
     (defconst KDS_BANK:string "kadena-stake-bank")
 
@@ -104,20 +106,20 @@
 
     ;;;;; Pool Related
 
-    ;create pool - for creating staking pool of reward token/stake token type fungi-v2/fungi-v2
-    ;id- id of pool, ex: "test-pool"
-    ;name- name of pool, ex: "Test Pool"
-    ;balance- amount of reward token given by pool owner to be distributed to stakers, ex: 200
-    ;apy- constant apy of pool reward, ex: 10.0
-    ;reward-token- name of fungible-v2 reward token provided by pool creator, ex: coin
-    ;stake-token- name of fungible-v2 token stakers must stake for reward token, ex: coin
-    ;account- pool creator account, ex: k:mykaccount
-    ;max-reward-per-account- max rewards a stakers account can ever claim in the pool, ex: 200
-    ;claim-wait-seconds- minimum number of seconds between staker reward claims, ex: 0
-    ;max-reward-per-claim- max rewards a staker account can claim per wait duration, ex: 200
-    ;reward-duration- if apy is not fixed, this is time it takes for rewards to become available to stakers, ex: 86400
-    ;reward-amount- if apy is not fixed, this is the amount of rewards available each reward-duration, ex: 10
-    ;apy-fixed- true or false for creating a pool with fixed apy (use apy variable) or variable apy (use reward-duration/reward-amount)
+    ;create pool: for creating staking pool of reward token/stake token type fungi-v2/fungi-v2
+    ;id: id of pool, ex: "test-pool"
+    ;name: name of pool, ex: "Test Pool"
+    ;balance: amount of reward token given by pool owner to be distributed to stakers, ex: 200
+    ;apy: constant apy of pool reward, ex: 10.0
+    ;reward-token: name of fungible-v2 reward token provided by pool creator, ex: coin
+    ;stake-token: name of fungible-v2 token stakers must stake for reward token, ex: coin
+    ;account: pool creator account, ex: k:mykaccount
+    ;max-reward-per-account: max rewards a stakers account can ever claim in the pool, ex: 200
+    ;claim-wait-seconds: minimum number of seconds between staker reward claims, ex: 0
+    ;max-reward-per-claim: max rewards a staker account can claim per wait duration, ex: 200
+    ;reward-duration: if apy is not fixed, this is time it takes for rewards to become available to stakers, ex: 86400
+    ;reward-amount: if apy is not fixed, this is the amount of rewards available each reward-duration, ex: 10
+    ;apy-fixed: true or false for creating a pool with fixed apy (use apy variable) or variable apy (use reward-duration/reward-amount)
 
     (defun create-pool (id:string
                         name:string
@@ -133,19 +135,23 @@
                         reward-amount:decimal
                         apy-fixed:bool )
 
-        @doc "Creates a new pool - Stakers stake fungi-v2"
+        @doc "Creates a new pool - Stakers stake and earn Fungible-v2 tokens"
         (with-capability (ACCOUNT_GUARD account)
             ;Enforce rules
             (enforce-pool-id id)
             (enforce-valid-id account)
             (enforce-valid-id id)
             (enforce-valid-name name)
+            (enforce (<= reward-amount balance) "Rewards amount must not exceed the pools reward balance")
+            (enforce (<= max-reward-per-claim balance) "Max rewards per claim must not exceed the pools reward balance")
             (enforce-unit balance (reward-token::precision))
-            ;Transfer token to pool
+            ;Create reward token account
             (reward-token::create-account id (kadena-stake-vault-guard))
+            ;Transfer reward token
             (reward-token::transfer-create account id (kadena-stake-vault-guard) balance)
-            ;If reward-token != stake-token then create a token account for stake-token
-            (if (= (reward-token::details id) (stake-token::details id)) true (stake-token::create-account id (kadena-stake-vault-guard)))
+            ;If reward-token != stake-token then create a token account for stake-token too
+            (if (= (get-token-key reward-token) (get-token-key stake-token)) true (if (= (reward-token::details id) (stake-token::details id)) true (stake-token::create-account id (kadena-stake-vault-guard))) )
+            ;(if (= (reward-token::details id) (stake-token::details id)) true (stake-token::create-account id (kadena-stake-vault-guard)))
             ;Insert pool
             (insert pools id
                 {
@@ -167,13 +173,15 @@
 
                 }
             )
-            ;Insert pool blank usage
+            ;Insert fresh blank pool usage for this new pool
             (insert pools-usage id {
                 "tokens-locked": 0.0,
                 "last-updated": (at "block-time" (chain-data)),
                 "owed": 0.0,
                 "paid": 0.0
             })
+            ;Return a message
+            (format "Created pool {} with {} {}" [name balance reward-token])
         )
     )
 
@@ -181,50 +189,78 @@
         @doc "Deactivates a pool and withdraws un-used funds back to pool creator if possible"
         (with-capability (ACCOUNT_GUARD account)
         (let
+            (
+                (pool-data (read pools pool-id))
+                (pool-usage-data (read pools-usage pool-id))
+            )
+            (let
                 (
-                    (pool-data (read pools pool-id))
-                    (pool-usage-data (read pools-usage pool-id))
+                    (token:module{fungible-v2} (at "reward-token" pool-data))
                 )
                 (let
                     (
-                        (token:module{fungible-v2} (at "reward-token" pool-data))
+                       (variable-rewards (calculate-available-now (at "start-time" pool-data) pool-id) )
+                       (fixed-rewards (+ (calculate-owed-upto-now (at "tokens-locked" pool-usage-data) (at "last-updated" pool-usage-data) (at "apy" pool-data) (token::precision) pool-id) (at "owed" pool-usage-data) ) )
                     )
                     (let
                         (
-                           (to-pay (- (at "balance" pool-data) (at "paid" pool-usage-data)) )
-                           (pool-balance (token::get-balance pool-id))
+                           (calculated-owed (if (= (at "apy-fixed" pool-data) true) fixed-rewards variable-rewards))
                         )
-                        ;Enforce pool owner
-                        (enforce (= (at "account" pool-data) account) "Access prohibited.")
-                        ;Enforce active pool
-                        (enforce (= (at "active" pool-data) true) "Staking pool is not active.")
-                        ;Enforce pool not empty
-                        (enforce (> pool-balance 0.0) "Pool is empty.")
-                        ;Transfer pool starting stake
-                        (install-capability (token::TRANSFER pool-id account to-pay) )
-                        (token::transfer pool-id account to-pay)
-                        ;Update pool
-                        (update pools pool-id
-                          (+
-                              {
-                                  "active": false,
-                                  "apy": 0.0
-                              }
-                              pool-data
-                          )
-                        )
-                        ;Update pool usage
-                        (update pools-usage pool-id
-                          (+
-                              {
-                                  "owed": 0.0,
-                                  "last-updated": (at "block-time" (chain-data))
-                              }
-                              pool-usage-data
-                          )
-                        )
-                    )
-                )
+                        (let
+                            (
+                               (calculated-unclaimed-max (round (- calculated-owed (at "paid" pool-usage-data)) (token::precision)) )
+                            )
+                            (let
+                                (
+                                   (calculated-unclaimed (if (< calculated-unclaimed-max 0.0) 0.0 calculated-unclaimed-max) )
+                                )
+                                (let
+                                    (
+                                       (to-pay-max (floor (- (- (at "balance" pool-data) (at "paid" pool-usage-data)) calculated-unclaimed) (token::precision)) )
+                                       (pool-balance (token::get-balance pool-id))
+                                    )
+                                    (let
+                                        (
+                                           (to-pay (if (< to-pay-max 0.0) 0.0 (floor (- to-pay-max (/ to-pay-max 1000) ) (token::precision)) ) )
+                                        )
+                                        ;to-pay
+                                        ;Enforce pool owner
+                                        (enforce (= (at "account" pool-data) account) "Access prohibited.")
+                                        ;Enforce active pool
+                                        (enforce (= (at "active" pool-data) true) "Staking pool is not active.")
+                                        ;Enforce pool not empty
+                                        (enforce (> pool-balance 0.0) "Pool is empty.")
+                                        ;Transfer pool starting stake
+                                        (install-capability (token::TRANSFER pool-id account to-pay) )
+                                        (token::transfer pool-id account to-pay)
+                                        ;Update pool
+                                        (update pools pool-id
+                                          (+
+                                              {
+                                                  "active": false,
+                                                  "balance": (- (at "balance" pool-data) to-pay)
+                                              }
+                                              pool-data
+                                          )
+                                        )
+                                        ;Update pool usage
+                                        (update pools-usage pool-id
+                                          (+
+                                              {
+                                                  "last-updated": (at "block-time" (chain-data))
+                                              }
+                                              pool-usage-data
+                                          )
+                                        )
+                                        ;Return a message
+                                        (format "Returned {} {} and deactivated pool {}" [to-pay token pool-id])
+                                    )
+                                )
+                            )
+                         )
+                      )
+                  )
+              )
         )
         )
     )
@@ -299,7 +335,7 @@
 
     ;  ;;;;; User Related
     (defun create-stake (pool-id:string account:string amount:decimal)
-        @doc " Adds a stake for a user "
+        @doc " Adds a users stake to a pool "
         (with-capability (ACCOUNT_GUARD account)
         (claim-rewards pool-id account)
             (let
@@ -337,14 +373,14 @@
                         (with-capability (PRIVATE)
                             (update-pool-usage-after-locked-amount-changed pool-id token amount)
                         )
-
+                        (format "Staked {} {} in pool {} with account {}" [amount (at "stake-token" pool-data) pool-id account])
                 )
             )
         )
     )
 
     (defun update-pool-usage-after-locked-amount-changed (pool-id:string token:module{fungible-v2} locked-amount-change:decimal)
-        @doc "Updates pool data after money was moved in or out of the pool"
+        @doc "Updates pool usage data after stakes are changed"
         (require-capability (PRIVATE))
         (let
             (
@@ -353,13 +389,14 @@
             )
             (let
                 (
-                    (available-rewards (calculate-available-now (at "start-time" pool-data) pool-id))
+                    (variable-rewards (calculate-available-now (at "start-time" pool-data) pool-id) )
+                    (fixed-rewards (+ (calculate-owed-upto-now (at "tokens-locked" pool-usage-data) (at "last-updated" pool-usage-data) (at "apy" pool-data) (token::precision) pool-id) (at "owed" pool-usage-data) ) )
                 )
                 (update pools-usage pool-id
                     {
                         "tokens-locked": (+ (at "tokens-locked" pool-usage-data) locked-amount-change),
                         "last-updated": (at "block-time" (chain-data)),
-                        "owed": (if (= (at "apy-fixed" pool-data) true) (+ (calculate-owed-upto-now (at "tokens-locked" pool-usage-data) (at "last-updated" pool-usage-data) (at "apy" pool-data) (token::precision) pool-id) (at "owed" pool-usage-data) ) available-rewards),
+                        "owed": (if (= (at "apy-fixed" pool-data) true) fixed-rewards variable-rewards),
                         "paid": (at "paid" pool-usage-data)
                     }
                 )
@@ -368,7 +405,7 @@
     )
 
     (defun update-pool-usage-after-rewards-claimed (pool-id:string claimed:decimal)
-        @doc "Updates pool usage after rewards claimed"
+        @doc "Updates pool usage after rewards are claimed"
         (require-capability (UPDATE))
         (let
             (
@@ -387,7 +424,7 @@
     )
 
     (defun claim-rewards (pool-id:string account:string)
-        @doc "Claims the rewards a user is owed"
+        @doc "Claims the rewards a user has earned from staking"
         (with-capability (ACCOUNT_GUARD account)
         (with-default-read stakes (get-stake-id-key account pool-id)
           { "account" : 'nonulls, "balance" : 0.0 }
@@ -408,62 +445,98 @@
                           (pool-user-data (read pool-user-stats stake-id))
                           (available-rewards (calculate-available-now (at "start-time" pool-data) pool-id))
                       )
-                      ;Determine amount to be paid as reward
+                      ;Lets determine rewards for our user depending on the pools options / APY, and get them sent out correctly.
+                      ;fixed-rewards: rewards for pools with fixed apy options.
+                      ;variable-rewards: rewards for pools with variable apy options.
+                      ;owner-percentage: stakers percentage of total staked tokens in pool- used for converting between fixed/variable rewards.
+                      ;calculated-reward: our final reward, either fixed or variable
+                      ;to-pay: what the staker is actually paid. Always clamped under the pool's 'max-reward-per-claim' option and 'max-rewards-per-account' option.
                       (let
                           (
-                             (fixed-reward (calculate-owed-upto-now (at "balance" stake) (at "last-updated" stake) (at "apy" pool-data) (token::precision) pool-id))
+                             (fixed-reward-max (calculate-owed-upto-now (at "balance" stake) (at "last-updated" stake) (at "apy" pool-data) (token::precision) pool-id))
+                             (total-rewards (calculate-owed-upto-now (at "tokens-locked" pool-usage-data) (at "last-updated" stake) (at "apy" pool-data) (token::precision) pool-id))
                           )
                           (let
                               (
-                                 (owner-percentage (/ fixed-reward  (calculate-owed-upto-now (at "tokens-locked" pool-usage-data) (at "last-updated" stake) (at "apy" pool-data) (token::precision) pool-id) ) )
+                                 (fixed-reward (if (>= (-(at "balance" pool-data) (at "paid" pool-usage-data)) fixed-reward-max) fixed-reward-max (-(at "balance" pool-data) (at "paid" pool-usage-data))) )
                               )
                               (let
                                   (
-                                     (variable-reward (floor (* available-rewards owner-percentage) (token::precision)))
+                                     (owner-percentage (/ fixed-reward  total-rewards) )
                                   )
                                   (let
                                       (
-                                         (calculated-reward (if (= (at "apy-fixed" pool-data) true) fixed-reward variable-reward) )
+                                         (variable-reward-max (floor (* available-rewards owner-percentage) (token::precision)))
                                       )
-                                      ;Check if user can stake due to time then determine if reward is bigger then max-reward-per-claim
                                       (let
                                           (
-                                             (to-pay (if (> (diff-time (at "block-time" (chain-data)) (at 'last-updated stake)) (at "claim-wait-seconds" pool-data) ) (if (> calculated-reward (at "max-reward-per-claim" pool-data)) (at "max-reward-per-claim" pool-data) (if (< (at "total-earned" pool-user-data) (at "max-reward-per-account" pool-data)) calculated-reward 0.0)) 0.0))
-
+                                             (variable-reward (if (>= (-(at "balance" pool-data) (at "paid" pool-usage-data)) variable-reward-max) variable-reward-max (-(at "balance" pool-data) (at "paid" pool-usage-data))) )
                                           )
-                                          ;Enforce account
-                                          (enforce (= account (at "account" stake)) "Not authorised to claim this stake")
-                                          ;Enforce active pool
-                                          (enforce (= (at "active" pool-data) true) "Staking pool is not active.")
-                                          ;Enforce balance
-                                          (enforce (>= to-pay 0.0) "You have no rewards to claim in this pool.")
-                                          ;Enforce claim reward duration
-                                          (enforce (> (diff-time (at "block-time" (chain-data)) (at 'last-updated stake)) (at "claim-wait-seconds" pool-data) ) "You must wait the full claim reward duration before claiming rewards.")
-                                          ;Install transfer capability determining if pool will empty and deactivate
-                                          (if (>= (- (at "balance" pool-data) (at "paid" pool-usage-data) ) to-pay) (install-capability (token::TRANSFER pool-id account to-pay)) (install-capability (token::TRANSFER pool-id account (- (at "balance" pool-data) (at "paid" pool-usage-data) ))) )
-                                          ;Transfer reward token depending on pool deactivating due to becoming empty
-                                          (if (>= (- (at "balance" pool-data) (at "paid" pool-usage-data) ) to-pay) (token::transfer pool-id account to-pay) (token::transfer pool-id account (- (at "balance" pool-data) (at "paid" pool-usage-data) )) )
-                                          ;Update stake time
-                                          (update stakes stake-id  (+ {"last-updated":  (at "block-time" (chain-data))} stake))
-                                          ;Update pool usage, determining if owed is based off a fixed or variable apy pool
-                                          (update pools-usage pool-id
-                                              (+
-                                                  {
-                                                      "last-updated":  (if (!= t_balance 0.0) (at "block-time" (chain-data)) (at "last-updated" stake)),
-                                                      "paid": (if (>= (- (at "balance" pool-data) (at "paid" pool-usage-data) ) to-pay) (+ (at "paid" pool-usage-data) to-pay) (+ (at "paid" pool-usage-data) (- (at "balance" pool-data) (at "paid" pool-usage-data) )) ),
-                                                      "owed": (if (= (at "apy-fixed" pool-data) true) (+ (calculate-owed-upto-now (at "tokens-locked" pool-usage-data) (at "last-updated" pool-usage-data) (at "apy" pool-data) (token::precision) pool-id) (at "owed" pool-usage-data) ) available-rewards)
-                                                  }
-                                                  pool-usage-data
+                                          (let
+                                              (
+                                                 (calculated-reward (if (= (at "apy-fixed" pool-data) true) fixed-reward variable-reward) )
+                                              )
+                                              (let
+                                                  (
+                                                     (to-pay (if (> (diff-time (at "block-time" (chain-data)) (at 'last-updated stake)) (at "claim-wait-seconds" pool-data) ) (if (> calculated-reward (at "max-reward-per-claim" pool-data)) (at "max-reward-per-claim" pool-data) (if (< (at "total-earned" pool-user-data) (at "max-reward-per-account" pool-data)) calculated-reward 0.0)) 0.0))
+
+                                                  )
+                                                  ;Enforce account
+                                                  (enforce (= account (at "account" stake)) "Not authorised to claim this stake")
+                                                  ;Enforce balance
+                                                  (enforce (>= to-pay 0.0) "You have no rewards to claim in this pool.")
+                                                  ;Enforce claim reward duration
+                                                  (enforce (> (diff-time (at "block-time" (chain-data)) (at 'last-updated stake)) (at "claim-wait-seconds" pool-data) ) "You must wait the full claim reward duration before claiming rewards.")
+                                                  ;Install reward token transfer capability, clamping transfer allowance below the pools available balance
+                                                  (if (>= (- (at "balance" pool-data) (at "paid" pool-usage-data) ) to-pay)
+                                                    (install-capability (token::TRANSFER pool-id account to-pay))
+                                                    (install-capability (token::TRANSFER pool-id account (- (at "balance" pool-data) (at "paid" pool-usage-data) )))
+                                                  )
+                                                  ;Transfer proper reward token allowance
+                                                  (if (>= (- (at "balance" pool-data) (at "paid" pool-usage-data) ) to-pay)
+                                                    (token::transfer pool-id account to-pay)
+                                                    (token::transfer pool-id account (- (at "balance" pool-data) (at "paid" pool-usage-data) ))
+                                                  )
+                                                  ;Update the users stake time
+                                                  (update stakes stake-id  (+ {"last-updated":  (at "block-time" (chain-data))} stake))
+                                                  ;Update pool usage with proper paid + owed by determining if owed amount is based off a fixed or variable apy pool
+                                                  (update pools-usage pool-id
+                                                      (+
+                                                          {
+                                                              "last-updated":  (if (!= t_balance 0.0) (at "block-time" (chain-data)) (at "last-updated" stake)),
+                                                              "paid": (if (>= (- (at "balance" pool-data) (at "paid" pool-usage-data) ) to-pay)
+                                                                        (+ (at "paid" pool-usage-data) to-pay)
+                                                                        (+ (at "paid" pool-usage-data) (- (at "balance" pool-data) (at "paid" pool-usage-data) ))
+                                                                      ),
+                                                              "owed": (if (= (at "apy-fixed" pool-data) true)
+                                                                        (+ (calculate-owed-upto-now (at "tokens-locked" pool-usage-data) (at "last-updated" pool-usage-data) (at "apy" pool-data) (token::precision) pool-id) (at "owed" pool-usage-data) )
+                                                                        available-rewards
+                                                                      )
+                                                          }
+                                                          pool-usage-data
+                                                      )
+                                                  )
+                                                  ;Update total earned for user
+                                                  (write pool-user-stats stake-id {
+                                                      "total-earned": (+ (at "total-earned" pool-user-data) to-pay)
+                                                  })
+                                                  ;Check if pool is tapped empty and if it needs to deactivate
+                                                  (if (>= (- (at "balance" pool-data) (at "paid" pool-usage-data) ) to-pay)
+                                                    (update pools pool-id { "active" : true })
+                                                    (update pools pool-id { "active" : false })
+                                                  )
+                                                  ;Check if pool now owes all its balance and if it needs to deactivate
+                                                  (if (>= (- (at "balance" pool-data) (at "paid" pool-usage-data) ) (at "owed" (read pools-usage pool-id)))
+                                                    (update pools pool-id { "active" : true })
+                                                    (update pools pool-id { "active" : false })
+                                                  )
+                                                  ;Return a result message
+                                                  (if (= (at "apy-fixed" pool-data) true)
+                                                    (format "Awarded {} with {} {}" [account to-pay token])
+                                                    (format "Awarded {} with {} {} for {}% of pool" [account to-pay token  (floor (* owner-percentage 100) 2) ])
+                                                  )
                                               )
                                           )
-                                          ;Update total earned for user
-                                          (write pool-user-stats stake-id {
-                                              "total-earned": (+ (at "total-earned" pool-user-data) to-pay)
-                                          })
-                                          ;Determine is pool is tapped and if it needs to deactivate
-                                          (if (>= (- (at "balance" pool-data) (at "paid" pool-usage-data) ) to-pay) (update pools pool-id { "active" : true }) (update pools pool-id { "active" : false }) )
-                                          (if (>= (- (at "balance" pool-data) (at "paid" pool-usage-data) ) (at "owed" (read pools-usage pool-id))) (update pools pool-id { "active" : true }) (update pools pool-id { "active" : false }) )
-                                          (format "Awarded {} with {} {} for {}% of pool" [account to-pay token  (floor (* owner-percentage 100) 2) ])
                                       )
                                   )
                               )
@@ -494,66 +567,129 @@
                         (pool-user-data (read pool-user-stats stake-id))
                         (available-rewards (calculate-available-now (at "start-time" pool-data) pool-id))
                     )
-                    ;Determine amount to be paid as reward
+                      ;Lets determine stake and rewards to return to the user depending on the pools options / APY, and get them both sent out correctly.
+                      ;fixed-rewards: rewards for pools with fixed apy options.
+                      ;variable-rewards: rewards for pools with variable apy options.
+                      ;owner-percentage: stakers percentage of total staked tokens in pool- used for converting between fixed/variable rewards.
+                      ;calculated-reward: our final reward, either fixed or variable
+                      ;to-pay-reward: what the staker is actually paid as a reward. Always clamped under the pool's 'max-reward-per-claim' option and 'max-rewards-per-account' option.
+                      ;to-pay-stake: the stakers staked tokens amount to return
                       (let
                           (
-                             (fixed-reward (calculate-owed-upto-now (at "balance" stake) (at "last-updated" stake) (at "apy" pool-data) (reward-token::precision) pool-id))
+                             (fixed-reward-max (calculate-owed-upto-now (at "balance" stake) (at "last-updated" stake) (at "apy" pool-data) (reward-token::precision) pool-id))
                              (to-pay-stake (at "balance" stake))
                           )
                           (let
                               (
-                                 (owner-percentage (/ fixed-reward  (calculate-owed-upto-now (at "tokens-locked" pool-usage-data) (at "last-updated" stake) (at "apy" pool-data) (reward-token::precision) pool-id) ) )
+                                 (fixed-reward (if (>= (-(at "balance" pool-data) (at "paid" pool-usage-data)) fixed-reward-max) fixed-reward-max (-(at "balance" pool-data) (at "paid" pool-usage-data))) )
                               )
                               (let
                                   (
-                                     (variable-reward (floor (* available-rewards owner-percentage) (reward-token::precision)))
+                                     (owner-percentage (/ fixed-reward  (calculate-owed-upto-now (at "tokens-locked" pool-usage-data) (at "last-updated" stake) (at "apy" pool-data) (reward-token::precision) pool-id) ) )
                                   )
                                   (let
                                       (
-                                         (calculated-reward (if (= (at "apy-fixed" pool-data) true) fixed-reward variable-reward) )
+                                         (variable-reward-max (floor (* available-rewards owner-percentage) (reward-token::precision)) )
                                       )
-                                      ;Check if user can stake due to time then determine if reward is bigger then max-reward-per-claim
                                       (let
                                           (
-                                             (to-pay-reward (if (> (diff-time (at "block-time" (chain-data)) (at 'last-updated stake)) (at "claim-wait-seconds" pool-data) ) (if (> calculated-reward (at "max-reward-per-claim" pool-data)) (at "max-reward-per-claim" pool-data) (if (< (at "total-earned" pool-user-data) (at "max-reward-per-account" pool-data)) calculated-reward 0.0)) 0.0))
-
+                                             (variable-reward (if (>= (-(at "balance" pool-data) (at "paid" pool-usage-data)) variable-reward-max) variable-reward-max (-(at "balance" pool-data) (at "paid" pool-usage-data))) )
                                           )
-                                          ;Enforce account
-                                          (enforce (= account (at "account" stake)) "Not authorised to claim this stake")
-                                          ;Lets transfer rewards and stake back to the user
-                                          ;Has the user earned less than their max reward? If so, lets give them a reward back if they have one.
-                                          ;Does reward token = stake token? If so, lets compose one single transfer capability and function to return an amount consisting of reward + stake.
-                                          (if (< (at "total-earned" pool-user-data) (at "max-reward-per-account" pool-data)) (if (= (reward-token::details pool-id) (stake-token::details pool-id)) (install-capability (reward-token::TRANSFER pool-id account (+ to-pay-stake to-pay-reward))) (install-capability (reward-token::TRANSFER pool-id account to-pay-reward))) true)
-                                          (if (< (at "total-earned" pool-user-data) (at "max-reward-per-account" pool-data)) (if (= (reward-token::details pool-id) (stake-token::details pool-id)) (reward-token::transfer pool-id account (+ to-pay-stake to-pay-reward)) (reward-token::transfer pool-id account to-pay-reward) ) true)
-                                          ;Now lets transfer the users stake back if we haven't already.
-                                          ;Does reward token = stake token? If so, skip stake transfer, because we transferred the stake with the reward in the code above- If not, transfer stake token back.
-                                          (if (= (reward-token::details pool-id) (stake-token::details pool-id)) true (install-capability (stake-token::TRANSFER pool-id account to-pay-stake)) )
-                                          (if (= (reward-token::details pool-id) (stake-token::details pool-id)) true (stake-token::transfer pool-id account to-pay-stake) )
-                                          ;Update stake
-                                          (update stakes stake-id  (+ {"last-updated":  (at "block-time" (chain-data)), "balance": (-(at "balance" stake) to-pay-stake) } stake))
-                                          ;Update pool usage
-                                          (update pools-usage pool-id
-                                              (+
-                                                  {
-                                                      "last-updated": (at "block-time" (chain-data)),
-                                                      "tokens-locked": (- (at "tokens-locked" pool-usage-data) to-pay-stake),
-                                                      "paid": (if (>= (- (at "balance" pool-data) (at "paid" pool-usage-data) ) to-pay-reward) (+ (at "paid" pool-usage-data) to-pay-reward) (+ (at "paid" pool-usage-data) (- (at "balance" pool-data) (at "paid" pool-usage-data) )) ),
-                                                      "owed": (if (= (at "apy-fixed" pool-data) true) (abs(-(+(calculate-owed-upto-now (at "tokens-locked" pool-usage-data) (at "last-updated" pool-usage-data) (at "apy" pool-data) (reward-token::precision) pool-id) (at "owed" pool-usage-data))to-pay-reward)) available-rewards)
-                                                  }
-                                                  pool-usage-data
+                                          (let
+                                              (
+                                                 (calculated-reward (if (= (at "apy-fixed" pool-data) true) fixed-reward variable-reward) )
+                                              )
+                                              (let
+                                                  (
+                                                     (to-pay-reward (if (> (diff-time (at "block-time" (chain-data)) (at 'last-updated stake)) (at "claim-wait-seconds" pool-data) ) (if (> calculated-reward (at "max-reward-per-claim" pool-data)) (at "max-reward-per-claim" pool-data) (if (< (at "total-earned" pool-user-data) (at "max-reward-per-account" pool-data)) calculated-reward 0.0)) 0.0))
+
+                                                  )
+                                                  ;Enforce account
+                                                  (enforce (= account (at "account" stake)) "Not authorised to claim this stake")
+                                                  ;Enforce stake
+                                                  (enforce (> to-pay-stake 0.0) "You dont have a stake in this pool to withdraw")
+                                                  ;Lets now transfer rewards and stake back to the user
+                                                  ;If stake and reward tokens are different, we compose 2 different transfer allowances and functions.
+                                                  ;If stake token and reward token are the same, we compose a single transfer allowance and function.
+                                                  (if (< (at "total-earned" pool-user-data) (at "max-reward-per-account" pool-data))
+                                                      (if (= (reward-token::details pool-id) (stake-token::details pool-id))
+                                                        (if (= (get-token-key reward-token) (get-token-key stake-token))
+                                                          (install-capability (reward-token::TRANSFER pool-id account (+ to-pay-stake to-pay-reward)))
+                                                          (install-capability (reward-token::TRANSFER pool-id account to-pay-reward)))
+                                                      (install-capability (reward-token::TRANSFER pool-id account to-pay-reward)) )
+                                                  true)
+                                                  ;Transfer reward or transfer reward + stake depending on token type
+                                                  (if (< (at "total-earned" pool-user-data) (at "max-reward-per-account" pool-data))
+                                                    (if (= (reward-token::details pool-id) (stake-token::details pool-id))
+                                                      (if (= (get-token-key reward-token) (get-token-key stake-token))
+                                                        (reward-token::transfer pool-id account (+ to-pay-stake to-pay-reward))
+                                                        (reward-token::transfer pool-id account to-pay-reward) )
+                                                      (reward-token::transfer pool-id account to-pay-reward) )
+                                                  true)
+                                                  ;Now lets transfer the users stake back if we haven't already in the logic above
+                                                  ;If stake token type is different from reward token type, compose a stake token transfer allowance
+                                                  (if (= (reward-token::details pool-id) (stake-token::details pool-id))
+                                                    true
+                                                    (if (= (get-token-key reward-token) (get-token-key stake-token))
+                                                      true
+                                                      (install-capability (stake-token::TRANSFER pool-id account to-pay-stake))
+                                                    )
+                                                  )
+                                                  ;If stake token type is different from reward token type, make stake token transfer now.
+                                                  (if (= (reward-token::details pool-id) (stake-token::details pool-id))
+                                                    true
+                                                    (if (= (get-token-key reward-token) (get-token-key stake-token))
+                                                      true
+                                                      (stake-token::transfer pool-id account to-pay-stake)
+                                                    )
+                                                  )
+                                                  ;Update stake
+                                                  (update stakes stake-id  (+ {"last-updated":  (at "block-time" (chain-data)), "balance": (-(at "balance" stake) to-pay-stake) } stake))
+                                                  ;Update pool usage
+                                                  ;Calculate paid, ensuring it doesnt exceed pools balance
+                                                  ;Calculate owed, depending if our pool has a fixed apy or not we apply correct calculation
+                                                  (update pools-usage pool-id
+                                                      (+
+                                                          {
+                                                              "last-updated": (at "block-time" (chain-data)),
+                                                              "tokens-locked": (- (at "tokens-locked" pool-usage-data) to-pay-stake),
+                                                              "paid": (if (>= (- (at "balance" pool-data) (at "paid" pool-usage-data) ) to-pay-reward)
+                                                                        (+ (at "paid" pool-usage-data) to-pay-reward)
+                                                                        (+ (at "paid" pool-usage-data) (- (at "balance" pool-data) (at "paid" pool-usage-data) ))
+                                                                      ),
+                                                              "owed": (if (= (at "apy-fixed" pool-data) true)
+                                                                        (abs(-(+(calculate-owed-upto-now (at "tokens-locked" pool-usage-data) (at "last-updated" pool-usage-data) (at "apy" pool-data) (reward-token::precision) pool-id) (at "owed" pool-usage-data))to-pay-reward))
+                                                                        available-rewards
+                                                                      )
+                                                          }
+                                                          pool-usage-data
+                                                      )
+                                                  )
+                                                  ;Update total paid rewards to account
+                                                  (write pool-user-stats stake-id {
+                                                      "total-earned": (+ (at "total-earned" pool-user-data) to-pay-reward)
+                                                  })
+                                                  ;Check if we need to deactivate our pool due to it becoming empty
+                                                  (if (>= (- (at "balance" pool-data) (at "paid" pool-usage-data) ) to-pay-reward)
+                                                    (update pools pool-id { "active" : true })
+                                                    (update pools pool-id { "active" : false })
+                                                  )
+                                                  ;Check if we need to deactivate our pool due to owing all thats available to stakers already
+                                                  (if (>= (- (at "balance" pool-data) (at "paid" pool-usage-data) ) (at "owed" (read pools-usage pool-id)))
+                                                    (update pools pool-id { "active" : true })
+                                                    (update pools pool-id { "active" : false })
+                                                  )
+                                                  ;Return a result message
+                                                  (if (= (at "apy-fixed" pool-data) true)
+                                                    (format "Awarded {} with {} {} and unstaked {} {}" [account to-pay-reward reward-token to-pay-stake stake-token])
+                                                    (format "Awarded {} with {} {} for {}% of pool, and unstaked {} {}" [account to-pay-reward reward-token (floor (* owner-percentage 100) 2) to-pay-stake stake-token])
+                                                  )
                                               )
                                           )
-                                          ;Update total paid rewards to account
-                                          (write pool-user-stats stake-id {
-                                              "total-earned": (+ (at "total-earned" pool-user-data) to-pay-reward)
-                                          })
-                                          ;Check if we need to deactivate our pool due to it becoming empty
-                                          (if (>= (- (at "balance" pool-data) (at "paid" pool-usage-data) ) to-pay-reward) (update pools pool-id { "active" : true }) (update pools pool-id { "active" : false }) )
-                                          (if (>= (- (at "balance" pool-data) (at "paid" pool-usage-data) ) (at "owed" (read pools-usage pool-id))) (update pools pool-id { "active" : true }) (update pools pool-id { "active" : false }) )
                                       )
+                                    )
                                   )
                               )
-                          )
                       )
                 )
           )
@@ -566,7 +702,7 @@
     ;;//////////////////////
 
     (defun calculate-available-now (start-time:time pool-id:string)
-        @doc " Calculates reward tokens available for distribution at any given time "
+        @doc " Calculates reward tokens available for variable APY distribution at any given time "
         (let
             (
                 (time-passed (diff-time  (at "block-time" (chain-data)) start-time) )
@@ -578,6 +714,7 @@
                     (token:module{fungible-v2} (at "reward-token" pool-data))
 
                 )
+                ;We clamp our reward calculation under the pool's available balance so we don't exceed it
                 (let
                     (
                         (total-available (floor (* (/ time-passed (at "reward-duration" pool-data)) (at "reward-amount" pool-data)) (token::precision) ))
@@ -591,7 +728,7 @@
     )
 
     (defun calculate-owed-upto-now (balance:decimal start-time:time apy:decimal precision:integer pool-id:string)
-        @doc " Calculates tokens owed for an APY and a balance of tokens from start-time to now "
+        @doc " Calculates tokens owed for a fixed APY and a balance of tokens from start-time to now "
         (let
             (
                 (time-passed (diff-time  (at "block-time" (chain-data)) start-time) )
@@ -599,14 +736,16 @@
                 (pool-usage-data (read pools-usage pool-id ["paid"]))
 
             )
-            (enforce ( >= time-passed 0.0) "From date is in the future")
-            (floor
-                    (
-                      *
-                      (apy-for-ratio-of-seconds-in-year (seconds-over-seconds-in-year time-passed) apy)
-                      balance
-                    )
-             precision
+            (let
+              (
+                (owed-max (floor (*(apy-for-ratio-of-seconds-in-year (seconds-over-seconds-in-year time-passed) apy)balance)precision))
+              )
+              (enforce ( >= time-passed 0.0) "From date is in the future")
+              ;We clamp our reward calculation under the pool's avaialble balance so we don't exceed it
+              (if (>= (-(at "balance" pool-data) (at "paid" pool-usage-data)) owed-max)
+                owed-max
+                (-(at "balance" pool-data) (at "paid" pool-usage-data))
+              )
             )
         )
     )
@@ -716,6 +855,12 @@
   (defun initialize ()
     @doc " Initialize the contract. Can only happen once. "
     (coin.create-account KDS_BANK (create-module-guard "kadena-stake-bank"))
+  )
+
+  (defun get-token-key
+    ( tokenA:module{fungible-v2} )
+    " Create key from token module"
+    (format "{}" [tokenA])
   )
 
 )
