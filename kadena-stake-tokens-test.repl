@@ -173,6 +173,7 @@
 (coin.get-balance "k:stuart")
 (test-capability (coin.TRANSFER "k:stuart" "test-pool2" 200.0))
 (env-chain-data { "block-time" : (time "2023-04-28T00:00:10Z") })
+
 (test.kadena-stake-tokens.create-pool-lp
     "test-pool2"
     "Test Pool 2"
@@ -185,6 +186,9 @@
     200.0
     0.0
     200.0
+    86400.0
+    10.0
+    true
 )
 (coin.get-balance "k:stuart")
 (commit-tx)
@@ -527,3 +531,234 @@
 (test.kadena-stake-tokens.get-pools)
 (test.kadena-stake-tokens.get-pool-info "test-pool2")
 (commit-tx)
+
+
+;////////////////////////////////////////////////////////////////////////////////////////////////////
+;Variable APY Testing
+;Test general functionality of variable APY pools
+;3 Stakers stake 100 coin, for an equal 33.3% share of the entire pool and get rewards back properly
+;////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+;Test create pool 'test-pool3' with k:stuart for 200 KDA
+(begin-tx)
+
+(coin.get-balance "k:stuart")
+(test-capability (coin.TRANSFER "k:stuart" "test-pool3" 200.0))
+(env-chain-data { "block-time" : (time "2022-04-28T00:00:00Z") })
+(test.kadena-stake-tokens.create-pool-lp
+    "test-pool3"
+    "Test Pool 3"
+    10.0
+    200.0
+    coin
+    coin
+    coin
+    "k:stuart"
+    200.0
+    0.0
+    200.0
+    86400.0
+    10.0
+    false
+)
+(coin.get-balance "k:stuart")
+(commit-tx)
+
+;This pool is designed to distribute 10 new rewards every day to stakers depending on their stake in the pool
+
+;Test create stake 100 coin:coin in test-pool3 with k:emily
+(begin-tx)
+(test.tokens.get-balance "coin:coin" "k:emily")
+(env-chain-data { "block-time" : (time "2022-04-28T00:00:01Z") })
+(test-capability (test.tokens.TRANSFER "coin:coin" "k:emily" "test-pool3" 100.0))
+(test.kadena-stake-tokens.create-stake "test-pool3" "k:emily" 100.0)
+(test.tokens.get-balance "coin:coin" "k:emily")
+(test.tokens.get-balance "coin:coin" "test-pool3")
+(commit-tx)
+;emily stakes 100 coin:coin
+;emily is the only staker with 100% of stake, she would get 100% of the available rewards today
+
+;Test create stake 100 coin:coin in test-pool3 with k:doug
+(begin-tx)
+(test.tokens.get-balance "coin:coin" "k:doug")
+(env-chain-data { "block-time" : (time "2022-04-28T00:00:02Z") })
+(test-capability (test.tokens.TRANSFER "coin:coin" "k:doug" "test-pool3" 100.0))
+(test.kadena-stake-tokens.create-stake "test-pool3" "k:doug" 100.0)
+(test.tokens.get-balance "coin:coin" "k:doug")
+(test.tokens.get-balance "coin:coin" "test-pool3")
+(commit-tx)
+;doug stakes 100 coin:coin
+;Doug is 2nd staker, with 50% of stake in pool
+;At this point 50% of the available rewards would go to doug, 50% to emily
+
+;Test create stake 100 coin:coin in test-pool3 with k:kitty
+(begin-tx)
+(test.tokens.get-balance "coin:coin" "k:kitty")
+(env-chain-data { "block-time" : (time "2022-04-28T00:00:03Z") })
+(test-capability (test.tokens.TRANSFER "coin:coin" "k:kitty" "test-pool3" 100.0))
+(test.kadena-stake-tokens.create-stake "test-pool3" "k:kitty" 100.0)
+(test.tokens.get-balance "coin:coin" "k:kitty")
+(test.tokens.get-balance "coin:coin" "test-pool3")
+(commit-tx)
+;kitty stakes 100 coin:coin
+;kitty is 3rd staker, stakes same amount as all previous stakers, for an equal share of 33.3% of pool
+;At this point, each staker would get 33.3% of available rewards
+;At this point, 30 rewards are available, which means each staker should recieve 10~ each
+
+;Test claim rewards function a DAY later with k:doug
+(begin-tx)
+(use test.kadena-stake-tokens)
+
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:doug")
+(test.kadena-stake-tokens.get-pool-info "test-pool3")
+
+(env-chain-data { "block-time" : (time "2022-05-01T00:00:01Z") })
+
+(test.kadena-stake-tokens.get-pool-info "test-pool3")
+
+(test.kadena-stake-tokens.claim-rewards "test-pool3" "k:doug")
+(expect
+    "account balance reflects credit"
+    1020.027437425927
+    (coin.get-balance "k:doug")
+)
+;Doug gets his 10kda reward
+
+
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:doug")
+(test.kadena-stake-tokens.get-pool-info "test-pool3")
+(test.kadena-stake-tokens.get-user-pools "k:doug")
+(commit-tx)
+;Doug got paid 10 coin for 33% of rewards
+
+;Test claim rewards function a DAY later with k:emily
+(begin-tx)
+(use test.kadena-stake-tokens)
+
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:emily")
+(test.kadena-stake-tokens.get-pool-info "test-pool3")
+
+(env-chain-data { "block-time" : (time "2022-05-01T00:00:02Z") })
+
+(test.kadena-stake-tokens.get-pool-info "test-pool3")
+
+(test.kadena-stake-tokens.claim-rewards "test-pool3" "k:emily")
+(expect
+    "account balance reflects credit"
+    1020.027476640370
+    (coin.get-balance "k:emily")
+)
+
+
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:emily")
+(test.kadena-stake-tokens.get-pool-info "test-pool3")
+(test.kadena-stake-tokens.get-user-pools "k:emily")
+(commit-tx)
+;Emily got paid 33.3% of the rewards- pass
+
+;Test claim rewards function a milisecond later with k:emily
+(begin-tx)
+(use test.kadena-stake-tokens)
+
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:emily")
+(test.kadena-stake-tokens.get-pool-info "test-pool3")
+
+(env-chain-data { "block-time" : (time "2022-05-01T00:00:03Z") })
+
+(test.kadena-stake-tokens.get-pool-info "test-pool3")
+
+(expect-failure
+    "Emily cannot claim stake because she has not waited long enough since last claim"
+    "You must wait the full claim reward duration before claiming rewards"
+    (test.kadena-stake-tokens.claim-rewards "test-pool3" "k:emily"))
+
+(expect
+    "account balance reflects credit"
+    1020.027476640370
+    (coin.get-balance "k:emily")
+)
+
+
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:emily")
+(test.kadena-stake-tokens.get-pool-info "test-pool3")
+(test.kadena-stake-tokens.get-user-pools "k:emily")
+(commit-tx)
+;Emily gets back no rewards since she just claimed rewards a milisecond ago, she must wait until more rewards become available
+
+;Test claim rewards function a DAY later with k:kitty
+(begin-tx)
+(use test.kadena-stake-tokens)
+
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:kitty")
+(test.kadena-stake-tokens.get-pool-info "test-pool3")
+
+(env-chain-data { "block-time" : (time "2022-05-01T00:00:03Z") })
+
+(test.kadena-stake-tokens.get-pool-info "test-pool3")
+
+(test.kadena-stake-tokens.claim-rewards "test-pool3" "k:kitty")
+(expect
+    "account balance reflects credit"
+    1020.027515537714
+    (coin.get-balance "k:kitty")
+)
+;kitty gets his 10kda reward
+
+
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:kitty")
+(test.kadena-stake-tokens.get-pool-info "test-pool3")
+(test.kadena-stake-tokens.get-user-pools "k:kitty")
+(commit-tx)
+;Kitty got paid 10 coin for 33% of rewards
+
+;Test withdraw stake k:kitty a milisecond later
+(begin-tx)
+(use test.kadena-stake-tokens)
+(test.kadena-stake-tokens.get-pool-info "test-pool3")
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:kitty")
+(test.tokens.get-balance "coin:coin" "k:kitty")
+(env-chain-data { "block-time" : (time "2022-05-01T00:00:04Z") })
+(test-capability (UPDATE))
+
+(describe-module "coin")
+(at 'name (describe-module "coin"))
+
+(test.kadena-stake-tokens.withdraw-stake "k:kitty" "test-pool3")
+
+(expect
+    "account balance reflects credit"
+    1020.027515537714
+    (coin.get-balance "k:kitty")
+)
+
+(test.tokens.get-balance "coin:coin" "k:kitty")
+(test.kadena-stake-tokens.get-pool-info "test-pool3")
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:kitty")
+(commit-tx)
+;kitty gets no rewards back because he just claimed them, but he gets his stake back of 100 coin:coin
+
+;Test get user pools
+(begin-tx)
+(test.kadena-stake-tokens.get-user-pools "k:emily")
+(commit-tx)
+
+;Test get user created pools
+(begin-tx)
+(test.kadena-stake-tokens.get-user-created-pools "k:stuart")
+(commit-tx)
+
+
+
+
+;TEST PASSES END OF TEST
