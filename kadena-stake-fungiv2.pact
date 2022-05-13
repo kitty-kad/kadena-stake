@@ -28,7 +28,7 @@
     (defconst NAME_MAX_LENGTH 30
       " Maximum character length for account IDs. ")
 
-    (defun kadena-stake-vault-guard:guard () (create-module-guard "kadena-stake-holdings"))
+    (defun kadena-stake-vault-guard:guard () (create-module-guard "kadena-stake-holdings") )
 
     ;;;;; CAPABILITIES
 
@@ -164,7 +164,7 @@
                     "account": account,
                     "active": true,
                     "max-reward-per-account": max-reward-per-account,
-                    "claim-wait-seconds": claim-wait-seconds,
+                    "claim-wait-seconds": (if (= apy-fixed true) claim-wait-seconds reward-duration ),
                     "max-reward-per-claim": max-reward-per-claim,
                     "start-time": (at "block-time" (chain-data)),
                     "reward-duration": reward-duration,
@@ -204,7 +204,7 @@
                     )
                     (let
                         (
-                           (calculated-owed (if (= (at "apy-fixed" pool-data) true) fixed-rewards variable-rewards))
+                           (calculated-owed (if (= (at "apy-fixed" pool-data) true) fixed-rewards (- variable-rewards (- (at "paid" pool-usage-data) variable-rewards )  ) ))
                         )
                         (let
                             (
@@ -221,13 +221,17 @@
                                     )
                                     (let
                                         (
-                                           (to-pay (if (< to-pay-max 0.0) 0.0 (floor (- to-pay-max (/ to-pay-max 1000) ) (token::precision)) ) )
+                                           (to-pay (if (= (at "tokens-locked" pool-usage-data) 0.0)
+                                                    (token::get-balance pool-id)
+                                                    (if (< to-pay-max 0.0)
+                                                      0.0
+                                                      (floor (- to-pay-max (/ to-pay-max 1000) ) (token::precision))
+                                                    )
+                                                   )
+                                           )
                                         )
-                                        ;to-pay
                                         ;Enforce pool owner
                                         (enforce (= (at "account" pool-data) account) "Access prohibited.")
-                                        ;Enforce active pool
-                                        (enforce (= (at "active" pool-data) true) "Staking pool is not active.")
                                         ;Enforce pool not empty
                                         (enforce (> pool-balance 0.0) "Pool is empty.")
                                         ;Transfer pool starting stake
@@ -478,7 +482,16 @@
                                               )
                                               (let
                                                   (
-                                                     (to-pay (if (> (diff-time (at "block-time" (chain-data)) (at 'last-updated stake)) (at "claim-wait-seconds" pool-data) ) (if (> calculated-reward (at "max-reward-per-claim" pool-data)) (at "max-reward-per-claim" pool-data) (if (< (at "total-earned" pool-user-data) (at "max-reward-per-account" pool-data)) calculated-reward 0.0)) 0.0))
+                                                     (to-pay (if (> (diff-time (at "block-time" (chain-data)) (at 'last-updated stake)) (at "claim-wait-seconds" pool-data) )
+                                                              (if (> calculated-reward (at "max-reward-per-claim" pool-data))
+                                                                (at "max-reward-per-claim" pool-data)
+                                                                (if (< (at "total-earned" pool-user-data) (at "max-reward-per-account" pool-data))
+                                                                  calculated-reward
+                                                                  0.0
+                                                                )
+                                                              )
+                                                              0.0)
+                                                      )
 
                                                   )
                                                   ;Enforce account
