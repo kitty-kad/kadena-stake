@@ -11,13 +11,13 @@
 (env-gaslog)
 (expect
   "Gas cost of loading fungible contract"
-  840 (env-gas))
+  60999 (env-gas))
 (env-gas 0) (env-gaslog)
 (load "coin.pact")
 (env-gaslog)
 (expect
   "Gas cost of loading coin contract"
-  3301 (env-gas))
+  74192 (env-gas))
 (create-table coin.coin-table)
 (create-table coin.allocation-table)
 (commit-tx)
@@ -144,6 +144,7 @@
 (coin.get-balance "k:emily")
 (commit-tx)
 
+
 ;Test calculate rewards - PASS
 (begin-tx)
 (env-chain-data { "block-time" : (time "2022-04-28T00:00:01Z") })
@@ -211,6 +212,7 @@
 (commit-tx)
 ;stuart stakes 100kda in the test-pool
 
+
 ;Test create stake 100KDA in test-pool with k:kitty, 2 ms after test-pool is created
 (begin-tx)
 (env-chain-data { "block-time" : (time "2022-04-28T00:00:04Z") })
@@ -225,12 +227,25 @@
 (commit-tx)
 ;kitty also stakes 100kda in test-pool
 
+
+;Test create stake 100KDA in test-pool with pool owner EXPECT FAILURE - PASSES
+(begin-tx)
+(env-chain-data { "block-time" : (time "2023-04-28T00:00:11Z") })
+(test-capability (coin.TRANSFER "k:emily" "test-pool" 100.0))
+(expect-failure
+ "Pool owners may not stake their own pools."
+ "Pool owners may not stake their own pools."
+(test.kadena-stake-fungiv2.create-stake "test-pool" "k:emily" 100.0))
+(commit-tx)
+;Emily attempts to stake in her own pool but fails due to factory rules
+
 ;/////////////////////////////////////////////////////////////////////////
 ;Test pool has 300 KDA in it
 ;APY of 10%
 ;3 Stakers - stuart / doug / kitty
 ;100 KDA Staked per user
 ;In 1 year Doug and Stuart and Kitty should all get 10 reward tokens each
+;We also test and make sure users cannot double withdraw/claim
 ;/////////////////////////////////////////////////////////////////////////
 
 ;Test claim rewards function a year later with k:doug
@@ -259,6 +274,7 @@
 (commit-tx)
 ;doug claims his 10kda reward
 
+
 ;Test claim rewards function a year later with k:stuart
 (begin-tx)
 (use test.kadena-stake-fungiv2)
@@ -285,7 +301,9 @@
 (commit-tx)
 ;stuart claims his reward of 10kda
 
+
 ;pool has rewarded doug 10kda, rewarded stuart 10, and owes kitty 10kda
+
 
 ;Test create stake 100KDA in test-pool with k:kitty while he is still owed 10kda
 (begin-tx)
@@ -335,6 +353,24 @@
 ;Kitty already claimed his rewards when he staked 100kda again, so now kitty gets 1 ms worth of rewards
 
 
+;Test deactivate pool with pool owner k:emily BEFORE the pool is empty
+(begin-tx)
+(use test.kadena-stake-fungiv2)
+(coin.get-balance "test-pool")
+(coin.get-balance "k:emily")
+(test.kadena-stake-fungiv2.get-pool-info "test-pool")
+
+(test.kadena-stake-fungiv2.deactivate-pool "test-pool" "k:emily")
+
+(test.kadena-stake-fungiv2.get-pool-info "test-pool")
+(coin.get-balance "k:emily")
+(coin.get-balance "test-pool")
+(commit-tx)
+;Emily deactivates the pool, and recieves what balance she can
+;Some KDA is left in the pool which belongs to the stakers
+;Once all stakers have withdrawn their stake, emily can collect the dust out of the pool too if she wishes
+
+
 ;Test withdraw stake k:doug
 (begin-tx)
 (use test.kadena-stake-fungiv2)
@@ -355,6 +391,7 @@
 (coin.get-balance "k:doug")
 (commit-tx)
 ;All of dougs staked KDA is returned back + a couple miliseconds worth of rewards
+
 
 ;Test withdraw stake k:stuart
 (begin-tx)
@@ -398,22 +435,11 @@
 (coin.get-balance "k:kitty")
 (commit-tx)
 ;All of kittys staked KDA is returned
-
 ;All users got +10 KDA reward from staking and got their stake back properly
+
 
 ;There is noone staking in the pool and the pool owner can now withdraw remaining reward tokens and deactivate pool if she wants
 
-;Test create stake 100KDA in test-pool with pool owner EXPECT FAILURE - PASSES
-(begin-tx)
-(env-chain-data { "block-time" : (time "2023-04-28T00:00:11Z") })
-(test-capability (coin.TRANSFER "k:emily" "test-pool" 100.0))
-(expect-failure
- "Pool owners may not stake their own pools."
- "Pool owners may not stake their own pools."
-(test.kadena-stake-fungiv2.create-stake "test-pool" "k:emily" 100.0))
-(commit-tx)
-
-;Emily trys to stake in her own pool but does not succeed due to rules
 
 ;Test deactivate pool with pool owner k:emily after pool is empty
 (begin-tx)
@@ -431,22 +457,38 @@
 
 ;emily gets back her KDA out of the pool and deactivates the pool
 
-;Test withdraw stake k:kitty after pool is deactivated and he has no stake or reward - division by 0
-; (begin-tx)
-; (use test.kadena-stake-fungiv2)
-; (test.kadena-stake-fungiv2.get-pool-info "test-pool")
-; (coin.get-balance "test-pool")
-; (coin.get-balance "k:kitty")
-; (env-chain-data { "block-time" : (time "2023-04-28T00:00:09Z") })
-; (test-capability (UPDATE))
-; (expect-failure
-;     "transfer amount must be positive"
-;     "transfer amount must be positive"
-;     (test.kadena-stake-fungiv2.withdraw-stake "k:kitty" "test-pool"))
-; (test.kadena-stake-fungiv2.get-pool-info "test-pool")
-; (coin.get-balance "test-pool")
-; (coin.get-balance "k:kitty")
-; (commit-tx)
+
+;Emily trys to restake her KDA in her own pool, which is also deactivated now:
+
+;Test create stake 100KDA in test-pool with pool owner EXPECT FAILURE - PASSES
+(begin-tx)
+(env-chain-data { "block-time" : (time "2023-04-28T00:00:11Z") })
+(test-capability (coin.TRANSFER "k:emily" "test-pool" 100.0))
+(expect-failure
+ "Pool is inactive"
+ "Staking pool is not active."
+(test.kadena-stake-fungiv2.create-stake "test-pool" "k:emily" 100.0))
+(commit-tx)
+;Emily's stake fails on error- cannot stake in pool that is deactivated
+
+
+;Theres nothing in the pool but kitty keeps trying to claim rewards a month later
+;Test withdraw stake k:kitty after pool is deactivated and he has no stake or reward - EXPECT FAILURE - PASSES
+(begin-tx)
+(use test.kadena-stake-fungiv2)
+(test.kadena-stake-fungiv2.get-pool-info "test-pool")
+(coin.get-balance "test-pool")
+(coin.get-balance "k:kitty")
+(env-chain-data { "block-time" : (time "2023-05-28T00:00:15Z") })
+(test-capability (UPDATE))
+(expect-failure
+    "Division by 0 halts empty transaction"
+    "Division by 0: (0.000000000000, 0.000000000000)"
+    (test.kadena-stake-fungiv2.withdraw-stake "k:kitty" "test-pool"))
+(test.kadena-stake-fungiv2.get-pool-info "test-pool")
+(coin.get-balance "test-pool")
+(coin.get-balance "k:kitty")
+(commit-tx)
 
 ;kitty gets nothing back from the pool because it was deactivated
 
@@ -457,14 +499,17 @@
 ;MISC TESTING
 ;//////////////////////////////////////////////////////////////////////////////
 
+;Test getting emilys pools for frontend
 (begin-tx)
 (test.kadena-stake-fungiv2.get-user-pools "k:emily")
 (commit-tx)
 
+;Test getting dougs stakes in a pool
 (begin-tx)
 (test.kadena-stake-fungiv2.get-user-stakes "test-pool" "k:doug")
 (commit-tx)
 
+;test getting emilys pools she operates
 (begin-tx)
 (test.kadena-stake-fungiv2.get-user-created-pools "k:emily")
 (commit-tx)
@@ -512,6 +557,8 @@
 ;Variable APY Testing
 ;Test general functionality of variable APY pools
 ;3 Stakers stake 100 coin, for an equal 33.3% share of the entire pool and get rewards back properly
+;Testing to also check pool deactivates properly before and after stakers leave the pool
+;Also testing to make sure stakers cant double claim/withdraw
 ;////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -633,6 +680,25 @@
 (commit-tx)
 ;Doug got paid 10 coin for 33% of rewards
 
+;Test deactivate pool with pool owner k:stuart after pool is empty
+(begin-tx)
+(use test.kadena-stake-fungiv2)
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:stuart")
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+
+(env-chain-data { "block-time" : (time "2022-05-01T00:00:03Z") })
+
+(test.kadena-stake-fungiv2.deactivate-pool "test-pool3" "k:stuart")
+
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+(coin.get-balance "k:stuart")
+(coin.get-balance "test-pool3")
+(commit-tx)
+;emily deactivates the pool before everyone has staked
+;she gets back the balance of the pool minus what is owed to stakers
+;we will now make sure the stakers get back what they are owed
+
 ;Test claim rewards function a DAY later with k:emily
 (begin-tx)
 (use test.kadena-stake-fungiv2)
@@ -641,14 +707,14 @@
 (coin.get-balance "k:emily")
 (test.kadena-stake-fungiv2.get-pool-info "test-pool3")
 
-(env-chain-data { "block-time" : (time "2022-05-01T00:00:02Z") })
+(env-chain-data { "block-time" : (time "2022-05-01T00:00:04Z") })
 
 (test.kadena-stake-fungiv2.get-pool-info "test-pool3")
 
 (test.kadena-stake-fungiv2.claim-rewards "test-pool3" "k:emily")
 (expect
     "account balance reflects credit"
-    879.830072092003
+    880.000149247302
     (coin.get-balance "k:emily")
 )
 
@@ -658,4 +724,160 @@
 (test.kadena-stake-fungiv2.get-pool-info "test-pool3")
 (test.kadena-stake-fungiv2.get-user-pools "k:emily")
 (commit-tx)
-;Emily got paid 33.3% of the rewards- pass
+;Emily got paid 33.3% of the rewards and 10 kda- pass
+
+;Test claim rewards function again a milisecond later with k:emily
+(begin-tx)
+(use test.kadena-stake-fungiv2)
+
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:emily")
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+
+(env-chain-data { "block-time" : (time "2022-05-01T00:00:05Z") })
+
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+
+
+(expect-failure
+    "Emily cannot claim stake because she has not waited long enough since last time"
+    "You must wait the full claim reward duration before claiming rewards"
+    (test.kadena-stake-fungiv2.claim-rewards "test-pool3" "k:emily"))
+
+
+(expect
+    "account balance reflects no reward"
+    880.000149247302
+    (coin.get-balance "k:emily")
+)
+
+
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:emily")
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+(test.kadena-stake-fungiv2.get-user-pools "k:emily")
+(commit-tx)
+;Emily doesnt get rewarded again because she already claimed, and has to wait for more awards to become available tomorrow - pass
+
+
+;Test claim rewards function a DAY later with k:kitty
+(begin-tx)
+(use test.kadena-stake-fungiv2)
+
+(coin.get-balance "test-pool3")
+
+(coin.get-balance "k:kitty")
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+
+(env-chain-data { "block-time" : (time "2022-05-01T00:00:06Z") })
+
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+
+(test.kadena-stake-fungiv2.claim-rewards "test-pool3" "k:kitty")
+(expect
+    "account balance reflects reward"
+    920.000234018182
+    (coin.get-balance "k:kitty")
+)
+
+
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:kitty")
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+(test.kadena-stake-fungiv2.get-user-pools "k:kitty")
+(commit-tx)
+;kitty got paid 10 coin for 33% of rewards
+
+;Test withdraw stake k:kitty
+(begin-tx)
+(use test.kadena-stake-fungiv2)
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:kitty")
+(env-chain-data { "block-time" : (time "2022-05-01T00:00:07Z") })
+(test-capability (UPDATE))
+
+(describe-module "coin")
+(at 'name (describe-module "coin"))
+
+(test.kadena-stake-fungiv2.withdraw-stake "k:kitty" "test-pool3")
+(expect
+    "account balance reflects credit"
+    1020.000234018182
+    (coin.get-balance "k:kitty")
+)
+
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:kitty")
+(commit-tx)
+;kitty doesnt get to claim again when he withdraws stake since he just claimed
+;Kittys stake is returned properly without any rewards
+
+;Test withdraw stake k:emily
+(begin-tx)
+(use test.kadena-stake-fungiv2)
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:emily")
+(env-chain-data { "block-time" : (time "2022-05-01T00:00:08Z") })
+(test-capability (UPDATE))
+
+(describe-module "coin")
+(at 'name (describe-module "coin"))
+
+(test.kadena-stake-fungiv2.withdraw-stake "k:emily" "test-pool3")
+(expect
+    "account balance reflects credit"
+    980.000149247302
+    (coin.get-balance "k:emily")
+)
+
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:emily")
+(commit-tx)
+;emily gets back her stake, and no reward since she just claimed her reward a few miliseconds ago
+
+;Test withdraw stake k:doug
+(begin-tx)
+(use test.kadena-stake-fungiv2)
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:doug")
+(env-chain-data { "block-time" : (time "2022-05-01T00:00:09Z") })
+(test-capability (UPDATE))
+
+(describe-module "coin")
+(at 'name (describe-module "coin"))
+
+(test.kadena-stake-fungiv2.withdraw-stake "k:doug" "test-pool3")
+(expect
+    "account balance reflects withdraw stake with no reward"
+    1020.000078428802
+    (coin.get-balance "k:doug")
+)
+
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:doug")
+(commit-tx)
+;Doug gets back his stake, and no reward since he previously claimed his reward miliseconds ago
+
+;The pool has now paid all users their reward, and owed + paid data is correct
+;We will now test deactivating the pool with the pool owner.
+
+;Test deactivate pool with pool owner k:stuart after pool is empty
+(begin-tx)
+(use test.kadena-stake-fungiv2)
+(coin.get-balance "test-pool3")
+(coin.get-balance "k:stuart")
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+
+(test.kadena-stake-fungiv2.deactivate-pool "test-pool3" "k:stuart")
+
+(test.kadena-stake-fungiv2.get-pool-info "test-pool3")
+(coin.get-balance "k:stuart")
+(coin.get-balance "test-pool3")
+(commit-tx)
+;Pool owner recieves proper amount of left over rewards, and the pool is now completely empty of all tokens correctly
